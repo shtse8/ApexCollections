@@ -47,6 +47,23 @@ Initial research based on `clojure/core.rrb-vector/doc/rrb-tree-notes.md` and we
 -   **Invariant:** Ensures overall tree balance (all leaves at same depth) while permitting the mix of strict/relaxed nodes. This allows efficient radix-based indexing (with potentially minor linear scans within relaxed nodes) alongside efficient O(log N) structural modifications (concat, insert, slice).
 -   **Focus Buffer:** Often employs a "focus" buffer (small array near the last modification point) to optimize localized updates/inserts, as opposed to just a "tail" buffer (always at the end).
 
+
+### Concatenation Algorithm (Summary - 2025-04-03 ~02:56 UTC+1)
+
+Based on Peter Horne-Khan's explanation:
+
+-   **Problem Context:** Strict persistent vectors require O(N) concatenation due to cascading node rebalancing to maintain fixed node sizes.
+-   **RRB Approach:** Uses a recursive merge strategy:
+    1.  Descend the rightmost path of the left tree and leftmost path of the right tree.
+    2.  At each level, merge the boundary nodes into a new 'middle' node.
+    3.  Combine slots/children from the left parent (minus rightmost), the new middle node, and the right parent (minus leftmost).
+-   **Search Step Invariant (`S <= ceil(P/M) + E`):** This is key. Instead of enforcing strict node sizes, it allows a small, constant (`E`) number of extra slots beyond the optimal (`ceil(P/M)`).
+-   **Conditional Rebalancing:** Rebalancing (redistributing elements between slots) only occurs *if* the combined node violates the Search Step Invariant.
+-   **Rebalancing Process:** If needed, a 'plan' shifts elements minimally between adjacent slots to satisfy the invariant, crucially *reusing* unchanged nodes/subtrees.
+-   **Efficiency:** By avoiding unnecessary rebalancing and reusing nodes, concatenation becomes O(log N) (proportional to tree height).
+-   **Propagation:** The merged/rebalanced node propagates upwards, potentially triggering merges at higher levels. Redundant root levels are removed.
+
+
 ### Initial Research Tasks:
 
 -   [ ] Read and summarize the core concepts from the primary Bagwell/Rompf (2011) paper.
