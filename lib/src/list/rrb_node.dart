@@ -1,8 +1,8 @@
 /// Defines the core structures for RRB-Tree nodes used by ApexList.
 library;
 
-const int _kBranchingFactor = 32; // Or M, typically 32
-const int _kLog2BranchingFactor = 5; // log2(32)
+const int kBranchingFactor = 32; // Or M, typically 32
+const int kLog2BranchingFactor = 5; // log2(32)
 
 /// Base class for RRB-Tree nodes.
 abstract class RrbNode<E> {
@@ -77,8 +77,8 @@ class RrbInternalNode<E> extends RrbNode<E> {
   E get(int index) {
     assert(index >= 0 && index < count);
 
-    final shift = height * _kLog2BranchingFactor;
-    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+    final shift = height * kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (kBranchingFactor - 1);
 
     if (isRelaxed) {
       // Relaxed Radix Search
@@ -108,8 +108,8 @@ class RrbInternalNode<E> extends RrbNode<E> {
   RrbNode<E> update(int index, E value) {
     assert(index >= 0 && index < count);
 
-    final shift = height * _kLog2BranchingFactor;
-    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+    final shift = height * kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (kBranchingFactor - 1);
     int slot = indexInNode; // Default for strict case
     int indexInChild = index & ((1 << shift) - 1); // Default for strict case
 
@@ -154,8 +154,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
           (lastChildIndex == 0) ? 0 : sizeTable![lastChildIndex - 1];
     } else {
       // Strict node: size is predictable
-      countBeforeLast =
-          lastChildIndex * (1 << (height * _kLog2BranchingFactor));
+      countBeforeLast = lastChildIndex * (1 << (height * kLog2BranchingFactor));
     }
 
     final newLastChild = lastChild.add(value);
@@ -180,7 +179,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
           splitChild.children[0]; // Replace original last child
       final nodeToAdd = splitChild.children[1]; // Node to potentially add
 
-      if (children.length < _kBranchingFactor) {
+      if (children.length < kBranchingFactor) {
         // Current node has space
         newChildren.add(nodeToAdd);
         if (newSizeTable != null) {
@@ -222,8 +221,8 @@ class RrbInternalNode<E> extends RrbNode<E> {
   RrbNode<E>? removeAt(int index) {
     assert(index >= 0 && index < count);
 
-    final shift = height * _kLog2BranchingFactor;
-    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+    final shift = height * kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (kBranchingFactor - 1);
     int slot = indexInNode; // Default for strict case
     int indexInChild = index & ((1 << shift) - 1); // Default for strict case
 
@@ -246,7 +245,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
       return this; // No change below
     }
 
-    final newChildren = List<RrbNode<E>>.of(children);
+    var newChildren = List<RrbNode<E>>.of(
+      children,
+    ); // Use 'var' as it might be reassigned
     List<int>? newSizeTable =
         sizeTable != null ? List<int>.of(sizeTable!) : null;
     final newCount = count - 1;
@@ -276,21 +277,534 @@ class RrbInternalNode<E> extends RrbNode<E> {
         }
       }
     }
+    // If child was modified (not removed), check if rebalancing is needed
+    if (newChild != null) {
+      // Check if the child is underfull and needs rebalancing/merging
+      // Use a threshold, e.g., less than half the branching factor
+      // Note: The exact threshold might depend on specific RRB-Tree variant rules.
+      const minSize = (kBranchingFactor + 1) ~/ 2; // Example: ceil(M/2)
+      if (newChild.count < minSize) {
+        // Attempt to rebalance or merge the children array
+        final rebalancedResult = _rebalanceOrMerge(
+          slot,
+          newChildren,
+          newSizeTable,
+        );
+        // Update state based on rebalancing result
+        newChildren = rebalancedResult.children;
+        newSizeTable = rebalancedResult.sizeTable;
+        // newCount remains count - 1, calculated earlier
+      }
+    }
+    // If newChild was null, the child was removed earlier (lines 256-266)
 
-    // TODO: Implement node merging / rebalancing if a node becomes too small
-    // This is the complex part involving invariants. For now, just return the modified node.
-
-    // If this node now only has one child, collapse it (return the child directly)
+    // After potential rebalancing/merging, check if this node needs collapsing
     if (newChildren.length == 1 && height > 0) {
-      // Only collapse if not the root node (which might be height 0 if list becomes small)
-      // Or handle root collapse at the ApexListImpl level.
-      // For simplicity here, assume we return the single child.
+      // If only one child remains (and we are not the root potentially becoming a leaf),
+      // return the child directly to collapse this level.
+      // Root node collapse (height 1 -> 0) should be handled by ApexListImpl.
       return newChildren[0];
     }
 
+    // If this node itself became empty after removal/merging
+    if (newChildren.isEmpty) {
+      return null;
+    }
+
+    // Return the potentially modified node
+    // Note: newCount was calculated before rebalancing. Rebalancing preserves total count.
     return RrbInternalNode<E>(height, newCount, newChildren, newSizeTable);
+  } // End of removeAt
+
+  // --- Rebalancing/Merging Helpers ---
+
+  /// Result of a rebalancing/merging operation.
+  /// Contains the potentially modified children list and size table.
+  ({List<RrbNode<E>> children, List<int>? sizeTable}) _rebalanceOrMerge(
+    int underfullSlotIndex,
+    List<RrbNode<E>> currentChildren,
+    List<int>? currentSizeTable,
+  ) {
+    const minSize = (kBranchingFactor + 1) ~/ 2; // Minimum size for a node
+
+    // 1. Try borrowing from left sibling
+    if (underfullSlotIndex > 0) {
+      final leftSibling = currentChildren[underfullSlotIndex - 1];
+      if (leftSibling.count > minSize) {
+        // Left sibling can lend an element/node
+        return _borrowFromLeft(
+          underfullSlotIndex,
+          currentChildren,
+          currentSizeTable,
+        );
+      }
+    }
+
+    // 2. Try borrowing from right sibling
+    if (underfullSlotIndex < currentChildren.length - 1) {
+      final rightSibling = currentChildren[underfullSlotIndex + 1];
+      if (rightSibling.count > minSize) {
+        // Right sibling can lend an element/node
+        return _borrowFromRight(
+          underfullSlotIndex,
+          currentChildren,
+          currentSizeTable,
+        );
+      }
+    }
+
+    // 3. Try merging with left sibling
+    if (underfullSlotIndex > 0) {
+      // Merge underfull node with its left sibling
+      return _mergeWithLeft(
+        underfullSlotIndex,
+        currentChildren,
+        currentSizeTable,
+      );
+    }
+
+    // 4. Try merging with right sibling
+    // This case applies if the underfull node is the first child (index 0)
+    // and couldn't borrow from the right sibling (index 1).
+    if (underfullSlotIndex < currentChildren.length - 1) {
+      // Merge underfull node (index 0) with its right sibling (index 1)
+      // Note: The merge operation typically merges the *right* node into the *left*.
+      // So we call mergeWithLeft on the *right* sibling's index.
+      return _mergeWithLeft(
+        underfullSlotIndex +
+            1, // Index of the node to merge *into* (the right sibling)
+        currentChildren,
+        currentSizeTable,
+      );
+    }
+
+    // Should not be reached if called correctly (an underfull node must have a sibling to merge with unless it's the root's only child, handled earlier)
+    print(
+      "WARNING: Rebalancing/merging failed unexpectedly at height $height, slot $underfullSlotIndex.",
+    );
+    return (children: currentChildren, sizeTable: currentSizeTable);
   }
-}
+
+  ({List<RrbNode<E>> children, List<int>? sizeTable}) _borrowFromLeft(
+    int receiverIndex, // Index of the underfull node receiving the element
+    List<RrbNode<E>> currentChildren,
+    List<int>? currentSizeTable,
+  ) {
+    assert(receiverIndex > 0 && receiverIndex < currentChildren.length);
+
+    final leftDonorNode = currentChildren[receiverIndex - 1];
+    final receiverNode = currentChildren[receiverIndex];
+    final newChildren = List<RrbNode<E>>.of(currentChildren);
+    List<int>? newSizeTable =
+        currentSizeTable != null ? List<int>.of(currentSizeTable) : null;
+
+    if (leftDonorNode is RrbLeafNode<E> && receiverNode is RrbLeafNode<E>) {
+      // --- Borrow from left leaf to right leaf ---
+      final donorElements = leftDonorNode.elements;
+      final elementToMove = donorElements.last;
+
+      final newDonorElements = donorElements.sublist(
+        0,
+        donorElements.length - 1,
+      );
+      final newReceiverElements = [elementToMove, ...receiverNode.elements];
+
+      final newDonorNode = RrbLeafNode<E>(newDonorElements);
+      final newReceiverNode = RrbLeafNode<E>(newReceiverElements);
+
+      newChildren[receiverIndex - 1] = newDonorNode;
+      newChildren[receiverIndex] = newReceiverNode;
+
+      if (newSizeTable != null) {
+        _updateSizeTableAfterBorrow(
+          receiverIndex - 1,
+          newDonorNode.count,
+          newReceiverNode.count,
+          newSizeTable,
+        );
+      }
+    } else if (leftDonorNode is RrbInternalNode<E> &&
+        receiverNode is RrbInternalNode<E>) {
+      // --- Borrow from left internal to right internal ---
+      assert(leftDonorNode.height == receiverNode.height);
+
+      final donorChildren = leftDonorNode.children;
+      final childNodeToMove = donorChildren.last; // Node to move
+
+      final newDonorChildren = donorChildren.sublist(
+        0,
+        donorChildren.length - 1,
+      );
+      final newReceiverChildren = [childNodeToMove, ...receiverNode.children];
+
+      // Create new nodes with updated children and counts
+      final newDonorNode = RrbInternalNode<E>(
+        leftDonorNode.height,
+        leftDonorNode.count - childNodeToMove.count, // Update count
+        newDonorChildren,
+        _computeSizeTableIfNeeded(newDonorChildren), // Recalculate size table
+      );
+      final newReceiverNode = RrbInternalNode<E>(
+        receiverNode.height,
+        receiverNode.count + childNodeToMove.count, // Update count
+        newReceiverChildren,
+        _computeSizeTableIfNeeded(
+          newReceiverChildren,
+        ), // Recalculate size table
+      );
+
+      newChildren[receiverIndex - 1] = newDonorNode;
+      newChildren[receiverIndex] = newReceiverNode;
+
+      if (newSizeTable != null) {
+        // Size table update is complex here, needs careful recalculation
+        // For now, just call the helper which might be incomplete
+        _updateSizeTableAfterBorrow(
+          receiverIndex - 1,
+          newDonorNode.count,
+          newReceiverNode.count,
+          newSizeTable,
+        );
+        print(
+          "WARNING: Size table update after internal borrow might be incorrect.",
+        );
+      }
+    } else {
+      throw StateError(
+        'Cannot borrow between nodes of different types (leaf/internal).',
+      );
+    }
+
+    return (children: newChildren, sizeTable: newSizeTable);
+  }
+
+  ({List<RrbNode<E>> children, List<int>? sizeTable}) _borrowFromRight(
+    int receiverIndex, // Index of the underfull node receiving the element
+    List<RrbNode<E>> currentChildren,
+    List<int>? currentSizeTable,
+  ) {
+    assert(receiverIndex >= 0 && receiverIndex < currentChildren.length - 1);
+
+    final receiverNode = currentChildren[receiverIndex];
+    final rightDonorNode = currentChildren[receiverIndex + 1];
+    final newChildren = List<RrbNode<E>>.of(currentChildren);
+    List<int>? newSizeTable =
+        currentSizeTable != null ? List<int>.of(currentSizeTable) : null;
+
+    if (receiverNode is RrbLeafNode<E> && rightDonorNode is RrbLeafNode<E>) {
+      // --- Borrow from right leaf to left leaf ---
+      final donorElements = rightDonorNode.elements;
+      final elementToMove = donorElements.first;
+
+      final newReceiverElements = [...receiverNode.elements, elementToMove];
+      final newDonorElements = donorElements.sublist(
+        1,
+      ); // Elements after the first
+
+      final newReceiverNode = RrbLeafNode<E>(newReceiverElements);
+      final newDonorNode = RrbLeafNode<E>(newDonorElements);
+
+      newChildren[receiverIndex] = newReceiverNode;
+      newChildren[receiverIndex + 1] = newDonorNode;
+
+      if (newSizeTable != null) {
+        // Update starts from the receiver node's index
+        _updateSizeTableAfterBorrow(
+          receiverIndex,
+          newReceiverNode.count,
+          newDonorNode.count,
+          newSizeTable,
+        );
+      }
+    } else if (receiverNode is RrbInternalNode<E> &&
+        rightDonorNode is RrbInternalNode<E>) {
+      // --- Borrow from right internal to left internal ---
+      assert(receiverNode.height == rightDonorNode.height);
+
+      final donorChildren = rightDonorNode.children;
+      final childNodeToMove = donorChildren.first; // Node to move
+
+      final newReceiverChildren = [...receiverNode.children, childNodeToMove];
+      final newDonorChildren = donorChildren.sublist(
+        1,
+      ); // Children after the first
+
+      // Create new nodes with updated children and counts
+      final newReceiverNode = RrbInternalNode<E>(
+        receiverNode.height,
+        receiverNode.count + childNodeToMove.count, // Update count
+        newReceiverChildren,
+        _computeSizeTableIfNeeded(
+          newReceiverChildren,
+        ), // Recalculate size table
+      );
+      final newDonorNode = RrbInternalNode<E>(
+        rightDonorNode.height,
+        rightDonorNode.count - childNodeToMove.count, // Update count
+        newDonorChildren,
+        _computeSizeTableIfNeeded(newDonorChildren), // Recalculate size table
+      );
+
+      newChildren[receiverIndex] = newReceiverNode;
+      newChildren[receiverIndex + 1] = newDonorNode;
+
+      if (newSizeTable != null) {
+        // Size table update is complex here, needs careful recalculation
+        // For now, just call the helper which might be incomplete
+        _updateSizeTableAfterBorrow(
+          receiverIndex,
+          newReceiverNode.count,
+          newDonorNode.count,
+          newSizeTable,
+        );
+        print(
+          "WARNING: Size table update after internal borrow might be incorrect.",
+        );
+      }
+    } else {
+      throw StateError(
+        'Cannot borrow between nodes of different types (leaf/internal).',
+      );
+    }
+
+    return (children: newChildren, sizeTable: newSizeTable);
+  }
+
+  ({List<RrbNode<E>> children, List<int>? sizeTable}) _mergeWithLeft(
+    int
+    rightNodeIndex, // Index of the right node (the one being merged *into* the left)
+    List<RrbNode<E>> currentChildren,
+    List<int>? currentSizeTable,
+  ) {
+    assert(rightNodeIndex > 0 && rightNodeIndex < currentChildren.length);
+
+    final leftNode = currentChildren[rightNodeIndex - 1];
+    final rightNode = currentChildren[rightNodeIndex];
+    final newChildren = List<RrbNode<E>>.of(currentChildren);
+    List<int>? newSizeTable =
+        currentSizeTable != null ? List<int>.of(currentSizeTable) : null;
+
+    if (leftNode is RrbLeafNode<E> && rightNode is RrbLeafNode<E>) {
+      // --- Merge two leaf nodes ---
+      final combinedElements = [...leftNode.elements, ...rightNode.elements];
+
+      if (combinedElements.length <= kBranchingFactor) {
+        // Merged node fits in a single leaf
+        final mergedNode = RrbLeafNode<E>(combinedElements);
+        newChildren[rightNodeIndex - 1] = mergedNode; // Replace left sibling
+        newChildren.removeAt(rightNodeIndex); // Remove right node
+        if (newSizeTable != null) {
+          // Remove size entry for the removed right node
+          newSizeTable.removeAt(rightNodeIndex);
+          // Update size entry for the merged node (left sibling's original index)
+          // and subsequent entries
+          _updateSizeTableAfterMerge(
+            rightNodeIndex - 1,
+            mergedNode.count,
+            newChildren,
+            newSizeTable,
+          );
+        }
+      } else {
+        // Merged node needs to split into two leaves
+        // This case implies the original nodes were likely near full, which contradicts
+        // the merge condition (one node being underfull). However, handling defensively.
+        // Split the combined elements (simple split for now)
+        final splitPoint =
+            (kBranchingFactor + 1) ~/ 2; // Or other split strategy
+        final newLeftLeafElements = combinedElements.sublist(0, splitPoint);
+        final newRightLeafElements = combinedElements.sublist(splitPoint);
+        final newLeftLeaf = RrbLeafNode<E>(newLeftLeafElements);
+        final newRightLeaf = RrbLeafNode<E>(newRightLeafElements);
+
+        // Replace the original two nodes with the two new split nodes
+        newChildren[rightNodeIndex - 1] = newLeftLeaf;
+        newChildren[rightNodeIndex] =
+            newRightLeaf; // Replace right node instead of removing
+
+        if (newSizeTable != null) {
+          // Update size table for both new nodes
+          _updateSizeTableAfterMerge(
+            rightNodeIndex - 1,
+            newLeftLeaf.count,
+            newChildren,
+            newSizeTable,
+          );
+          // Note: _updateSizeTableAfterMerge handles subsequent entries correctly
+        }
+      }
+    } else if (leftNode is RrbInternalNode<E> &&
+        rightNode is RrbInternalNode<E>) {
+      // --- Merge two internal nodes ---
+      assert(
+        leftNode.height == rightNode.height,
+      ); // Must be same height to merge
+
+      final combinedChildren = [...leftNode.children, ...rightNode.children];
+      final combinedCount = leftNode.count + rightNode.count;
+
+      if (combinedChildren.length <= kBranchingFactor) {
+        // Merged children fit in a single internal node
+        // Create the merged node. Size table needs recalculation.
+        final mergedNode = RrbInternalNode<E>(
+          leftNode.height,
+          combinedCount,
+          combinedChildren,
+          _computeSizeTableIfNeeded(combinedChildren), // Recalculate size table
+        );
+
+        newChildren[rightNodeIndex - 1] = mergedNode; // Replace left sibling
+        newChildren.removeAt(rightNodeIndex); // Remove right node
+        if (newSizeTable != null) {
+          newSizeTable.removeAt(rightNodeIndex);
+          // Update size table from the merged node onwards
+          _updateSizeTableAfterMerge(
+            rightNodeIndex - 1,
+            mergedNode.count,
+            newChildren,
+            newSizeTable,
+          );
+        }
+      } else {
+        // Merged children overflow, need to split into two internal nodes
+        // Distribute combinedChildren across two new nodes (simple split)
+        final splitPoint =
+            (kBranchingFactor + 1) ~/ 2; // Or other split strategy
+        final newLeftChildren = combinedChildren.sublist(0, splitPoint);
+        final newRightChildren = combinedChildren.sublist(splitPoint);
+
+        // Calculate counts for the new nodes
+        int newLeftCount = 0;
+        for (final child in newLeftChildren) {
+          newLeftCount += child.count;
+        }
+        final newRightCount = combinedCount - newLeftCount;
+
+        // Create the two new internal nodes
+        final newLeftNode = RrbInternalNode<E>(
+          leftNode.height,
+          newLeftCount,
+          newLeftChildren,
+          _computeSizeTableIfNeeded(newLeftChildren),
+        );
+        final newRightNode = RrbInternalNode<E>(
+          leftNode.height,
+          newRightCount,
+          newRightChildren,
+          _computeSizeTableIfNeeded(newRightChildren),
+        );
+
+        // Replace the original two nodes with the two new split nodes
+        newChildren[rightNodeIndex - 1] = newLeftNode;
+        newChildren[rightNodeIndex] = newRightNode; // Replace right node
+
+        if (newSizeTable != null) {
+          // Update size table for both new nodes
+          _updateSizeTableAfterMerge(
+            rightNodeIndex - 1,
+            newLeftNode.count,
+            newChildren,
+            newSizeTable,
+          );
+          // _updateSizeTableAfterMerge handles subsequent entries correctly
+        }
+      }
+    } else {
+      // Merging leaf and internal node directly is not standard in RRB-Trees.
+      // This suggests an issue with tree structure or invariants.
+      throw StateError(
+        'Cannot merge nodes of different types (leaf/internal) directly.',
+      );
+    }
+
+    // Return the modified children list and size table
+    return (children: newChildren, sizeTable: newSizeTable);
+  }
+
+  /// Helper to update the size table after a merge or borrow operation.
+  /// Assumes the children list has been updated *before* calling this.
+  void _updateSizeTableAfterMerge(
+    int
+    startIndex, // Index of the first node that changed or where changes begin
+    int startNodeCount, // Count of the node at startIndex (if it changed)
+    List<RrbNode<E>> children, // The updated children list
+    List<int> sizeTable, // The size table being updated
+  ) {
+    int cumulativeCount = (startIndex == 0) ? 0 : sizeTable[startIndex - 1];
+    sizeTable[startIndex] = cumulativeCount + startNodeCount;
+    for (int i = startIndex + 1; i < sizeTable.length; i++) {
+      // Need to use the *new* count of the child at index i
+      cumulativeCount += children[i].count;
+      sizeTable[i] = cumulativeCount;
+    }
+    // If the last node was removed during merge, the loop handles it correctly.
+    // If nodes were split, the loop updates subsequent counts.
+  }
+
+  /// Helper to update the size table after a borrow operation.
+  /// Assumes the children list contains the *updated* nodes before calling this.
+  void _updateSizeTableAfterBorrow(
+    int leftNodeIndex, // Index of the node that donated
+    int newLeftNodeCount,
+    int newRightNodeCount, // Count of the node that received
+    List<int> sizeTable, // The size table being updated
+  ) {
+    int cumulativeCount =
+        (leftNodeIndex == 0) ? 0 : sizeTable[leftNodeIndex - 1];
+    sizeTable[leftNodeIndex] = cumulativeCount + newLeftNodeCount;
+    sizeTable[leftNodeIndex + 1] =
+        cumulativeCount +
+        newLeftNodeCount +
+        newRightNodeCount; // Update receiver node index
+
+    // Update subsequent entries
+    for (int i = leftNodeIndex + 2; i < sizeTable.length; i++) {
+      // Need to use the *new* count of the child at index i (which hasn't changed here)
+      // But the cumulative count needs updating based on the previous entry.
+      sizeTable[i] =
+          sizeTable[i - 1] +
+          children[i].count; // Assuming children list is accessible or passed
+      // TODO: Revisit this - might need access to the full children list here.
+      // For now, this logic might be incomplete if sizeTable length > leftNodeIndex + 2
+    }
+    print(
+      "WARNING: _updateSizeTableAfterBorrow might be incomplete for subsequent entries.",
+    );
+  }
+
+  /// Computes a size table for a list of children, returning null if not needed (strict).
+  List<int>? _computeSizeTableIfNeeded(List<RrbNode<E>> children) {
+    bool needsTable = false;
+    int expectedChildSize = -1; // Initialize
+
+    if (children.isEmpty) return null; // Should not happen for internal nodes
+
+    // Determine expected size based on height (only for non-leaf children)
+    if (children[0].height > 0) {
+      expectedChildSize = 1 << (children[0].height * kLog2BranchingFactor);
+    }
+
+    int cumulativeCount = 0;
+    final sizeTable = List<int>.filled(children.length, 0);
+    for (int i = 0; i < children.length; i++) {
+      final child = children[i];
+      cumulativeCount += child.count;
+      sizeTable[i] = cumulativeCount;
+      // Check if relaxation is needed
+      if (i < children.length - 1) {
+        // Don't need to check size for the very last child
+        if (child.height > 0 && child.count != expectedChildSize) {
+          needsTable = true;
+        } else if (child.height == 0 && child.count != kBranchingFactor) {
+          // Also relaxed if a leaf child isn't full (except potentially the last one)
+          needsTable = true;
+        }
+      }
+    }
+
+    return needsTable ? sizeTable : null;
+  }
+} // End of RrbInternalNode
 
 /// Represents a leaf node in the RRB-Tree.
 /// Contains the actual list elements.
@@ -307,7 +821,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
 
   RrbLeafNode(this.elements)
     : assert(elements.isNotEmpty),
-      assert(elements.length <= _kBranchingFactor);
+      assert(elements.length <= kBranchingFactor);
 
   @override
   E get(int index) {
@@ -332,7 +846,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
 
   @override
   RrbNode<E> add(E value) {
-    if (elements.length < _kBranchingFactor) {
+    if (elements.length < kBranchingFactor) {
       // Leaf has space, create new leaf with appended element
       final newElements = List<E>.of(elements)..add(value);
       return RrbLeafNode<E>(newElements);

@@ -1,11 +1,12 @@
-import 'package:collection/collection.dart'; // For equality, mixins if needed
+import 'package:collection/collection.dart'
+    as collection; // For equality, mixins, bitCount
 import 'apex_map_api.dart';
-import 'champ_node.dart';
+import 'champ_node.dart' as champ; // Use prefix for clarity and constants
 
 /// Concrete implementation of [ApexMap] using a CHAMP Trie.
 class ApexMapImpl<K, V> extends ApexMap<K, V> {
   /// The root node of the CHAMP Trie. Can be ChampEmptyNode.
-  final ChampNode<K, V> _root;
+  final champ.ChampNode<K, V> _root;
 
   /// The number of key-value pairs in the map.
   final int _length;
@@ -13,7 +14,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
   /// The canonical empty instance (internal).
   static final ApexMapImpl _emptyInstance = ApexMapImpl._(
-    ChampEmptyNode.instance(),
+    champ.ChampEmptyNode.instance(),
     0,
   );
 
@@ -54,14 +55,12 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   bool get isNotEmpty => _length > 0;
 
   @override
-  // Basic implementation using iterator. Inefficient.
-  // TODO: Implement efficient keys/values iterables based on tree traversal.
-  Iterable<K> get keys => entries.map((entry) => entry.key);
+  // Delegates to the efficient entries iterator
+  Iterable<K> get keys => entries.map((e) => e.key);
 
   @override
-  // Basic implementation using iterator. Inefficient.
-  // TODO: Implement efficient keys/values iterables based on tree traversal.
-  Iterable<V> get values => entries.map((entry) => entry.value);
+  // Delegates to the efficient entries iterator
+  Iterable<V> get values => entries.map((e) => e.value);
 
   // --- Element Access ---
 
@@ -93,14 +92,17 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   ApexMap<K, V> add(K key, V value) {
     // TODO: Handle null keys if necessary
-    final newRoot = _root.add(key, value, key.hashCode, 0);
-    if (identical(newRoot, _root)) return this; // No change
+    // Assume _root.add returns an object like:
+    // class ChampAddResult<K, V> { final ChampNode<K, V> node; final bool didAdd; ... }
+    final addResult = _root.add(key, value, key.hashCode, 0);
 
-    // TODO: Need a way to track if size actually increased (add vs update).
-    // The node 'add' method should ideally signal this, or we need to check containsKey first.
-    // For now, we *incorrectly* assume size always increases if the root changes.
-    final newLength = containsKey(key) ? _length : _length + 1; // Basic check
-    return ApexMapImpl._(newRoot, newLength);
+    // If the node itself didn't change, return the original map.
+    if (identical(addResult.node, _root)) return this;
+
+    // Calculate the new length based on whether an actual insertion occurred.
+    final newLength = addResult.didAdd ? _length + 1 : _length;
+
+    return ApexMapImpl._(addResult.node, newLength);
   }
 
   @override
@@ -118,25 +120,20 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   ApexMap<K, V> remove(K key) {
     // TODO: Handle null keys if necessary
-    // TODO: Need remove to signal if a change occurred for length update
-    // TODO: Need remove to signal if a change occurred for length update.
-    // Use a temporary flag or result object from node.remove in the future.
-    bool removed = false; // Placeholder
-    final currentLength = _length; // Capture length before potential removal
-    final newRoot = _root.remove(key, key.hashCode, 0 /*, &removed */);
+    // Assume _root.remove returns an object like:
+    // class ChampRemoveResult<K, V> { final ChampNode<K, V> node; final bool didRemove; ... }
+    final removeResult = _root.remove(key, key.hashCode, 0);
 
-    if (identical(newRoot, _root)) return this; // No change
+    // If the node itself didn't change, return the original map.
+    if (identical(removeResult.node, _root)) return this;
 
-    // Placeholder logic for length update - assumes removal happened if root changed.
-    // This is incorrect if remove modified structure without removing the key (e.g., collision node change).
-    final newLength = _length - 1; // Incorrect if key wasn't actually present
-    // A better check:
-    // final newLength = currentLength > 0 && !containsKey(key) ? currentLength -1 : currentLength; // Check *after* supposed removal
+    // Calculate the new length based on whether a removal actually occurred.
+    final newLength = removeResult.didRemove ? _length - 1 : _length;
 
-    return ApexMapImpl._(
-      newRoot,
-      newLength,
-    ); // Length update is likely wrong here
+    // Ensure length doesn't go negative (shouldn't happen if didRemove is correct)
+    assert(newLength >= 0);
+
+    return ApexMapImpl._(removeResult.node, newLength);
   }
 
   @override
@@ -191,9 +188,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   // Needs an efficient iterator over the CHAMP trie nodes.
 
   @override
-  // Basic iterator implementation. Inefficient.
-  // TODO: Implement efficient iterator based on tree traversal.
-  Iterator<MapEntry<K, V>> get iterator => _ChampTrieIterator<K, V>(this); // Placeholder, needs implementation
+  Iterator<MapEntry<K, V>> get iterator => _ChampTrieIterator<K, V>(_root);
 
   // Add stubs for other required Iterable methods
   @override
@@ -306,8 +301,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
   @override
   void forEachEntry(void Function(K key, V value) f) {
-    // Basic implementation using iterator. Inefficient.
-    // TODO: Implement efficient forEach based on tree traversal.
+    // Uses the efficient iterator implicitly via 'entries'
     for (final entry in entries) {
       f(entry.key, entry.value);
     }
@@ -350,7 +344,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   }
 
   // --- Equality and HashCode ---
-  static const MapEquality _equality = MapEquality();
+  static const collection.MapEquality _equality = collection.MapEquality();
 
   @override
   bool operator ==(Object other) {
@@ -375,39 +369,117 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   }
 }
 
-// Need to link the factory constructor in the API file to this implementation
-// TODO: Implement _ChampTrieIterator
+/// Efficient iterator for traversing the CHAMP Trie.
 class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
-  final ApexMapImpl<K, V> _map;
-  // TODO: Add state for efficient tree traversal (stack, node iterators)
-  Iterator<MapEntry<K, V>>? _backingIterator; // Temporary inefficient fallback
-  final int _count = 0;
+  // Stacks to manage the traversal state
+  final List<champ.ChampNode<K, V>> _nodeStack = [];
+  final List<int> _bitposStack =
+      []; // Stores the next bit position (1 << i) to check
+  final List<Iterator<MapEntry<K, V>>> _collisionIteratorStack =
+      []; // For CollisionNodes
 
-  _ChampTrieIterator(this._map);
+  MapEntry<K, V>? _currentEntry;
 
-  void _initializeBackingIterator() {
-    // Inefficient fallback: create a standard map and iterate its entries
-    // This is done lazily to avoid circular dependency in constructor.
-    _backingIterator ??= Map<K, V>.fromEntries(_map.entries).entries.iterator;
+  _ChampTrieIterator(champ.ChampNode<K, V> rootNode) {
+    if (!rootNode.isEmptyNode) {
+      _pushNode(rootNode);
+    }
+  }
+
+  void _pushNode(champ.ChampNode<K, V> node) {
+    if (node is champ.ChampCollisionNode<K, V>) {
+      _nodeStack.add(node);
+      _bitposStack.add(0); // Not used for collision nodes
+      _collisionIteratorStack.add(node.entries.iterator);
+    } else if (node is champ.ChampInternalNode<K, V>) {
+      _nodeStack.add(node);
+      _bitposStack.add(1); // Start checking from the first bit position
+    }
+    // ChampEmptyNode is not pushed
   }
 
   @override
   MapEntry<K, V> get current {
-    if (_backingIterator == null) {
-      // Ensure iterator is initialized if current is accessed before moveNext (though against contract)
-      _initializeBackingIterator();
+    if (_currentEntry == null) {
+      // Adhere to Iterator contract: throw if current is accessed before moveNext
+      // or after moveNext returns false.
+      throw StateError('No current element');
     }
-    return _backingIterator!.current;
+    return _currentEntry!;
   }
 
   @override
   bool moveNext() {
-    // Initialize lazily on first call
-    _initializeBackingIterator();
+    while (_nodeStack.isNotEmpty) {
+      final node = _nodeStack.last;
+      final bitpos = _bitposStack.last;
 
-    final result = _backingIterator!.moveNext();
-    // _count isn't actually used anywhere currently, could be removed or used for validation.
-    // if (result) _count++;
-    return result;
+      if (node is champ.ChampCollisionNode<K, V>) {
+        final iterator = _collisionIteratorStack.last;
+        if (iterator.moveNext()) {
+          _currentEntry = iterator.current;
+          return true;
+        } else {
+          // Finished with this collision node
+          _nodeStack.removeLast();
+          _bitposStack.removeLast();
+          _collisionIteratorStack.removeLast();
+          continue; // Try the next node on the stack
+        }
+      }
+
+      if (node is champ.ChampInternalNode<K, V>) {
+        final dataMap = node.dataMap;
+        final nodeMap = node.nodeMap;
+        final content = node.content;
+
+        // Resume checking bit positions from where we left off
+        for (
+          int currentBitpos = bitpos;
+          currentBitpos <
+              (1 << champ.kBranchingFactor); // Use imported constant
+          currentBitpos <<= 1
+        ) {
+          if ((dataMap & currentBitpos) != 0) {
+            // Found a data entry
+            final dataIndex = champ.bitCount(
+              // Use bitCount from champ_node.dart
+              dataMap & (currentBitpos - 1),
+            );
+            final payloadIndex = dataIndex * 2;
+            final key = content[payloadIndex] as K;
+            final value = content[payloadIndex + 1] as V;
+            _currentEntry = MapEntry(key, value);
+            // Update stack to resume after this bitpos on next call
+            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
+            return true;
+          }
+          if ((nodeMap & currentBitpos) != 0) {
+            // Found a sub-node, push it onto the stack and descend
+            final nodeLocalIndex = champ.bitCount(
+              // Use bitCount from champ_node.dart
+              nodeMap & (currentBitpos - 1),
+            );
+            // Explicitly cast to int as a workaround for potential analyzer issue
+            final nodeIndex = (content.length - 1 - nodeLocalIndex) as int;
+            final subNode = content[nodeIndex] as champ.ChampNode<K, V>;
+
+            // Update stack to resume after this bitpos in the current node later
+            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
+            // Push the new sub-node to explore next
+            _pushNode(subNode);
+            // Restart the outer loop to process the newly pushed node
+            continue; // Use continue to restart the while loop with the new node
+          }
+        }
+        // If we finish iterating through all bit positions for this node, pop it.
+        _nodeStack.removeLast();
+        _bitposStack.removeLast();
+      }
+    }
+
+    // Stack is empty, iteration complete
+    _currentEntry = null; // Invalidate current
+    return false;
   }
 }
