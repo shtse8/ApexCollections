@@ -9,6 +9,7 @@ environment:
 # Add regular dependencies here.
 dependencies:
   meta: ^1.12.0 # For @immutable etc.
+  collection: ^1.19.1
   # path: ^1.8.0
 
 dev_dependencies:
