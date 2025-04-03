@@ -381,7 +381,7 @@ class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
   final ApexMapImpl<K, V> _map;
   // TODO: Add state for efficient tree traversal (stack, node iterators)
   Iterator<MapEntry<K, V>>? _backingIterator; // Temporary inefficient fallback
-  int _count = 0;
+  final int _count = 0;
 
   _ChampTrieIterator(this._map);
 

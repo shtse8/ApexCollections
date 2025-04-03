@@ -1,4 +1,5 @@
 /// Defines the core structures for RRB-Tree nodes used by ApexList.
+library;
 
 const int _kBranchingFactor = 32; // Or M, typically 32
 const int _kLog2BranchingFactor = 5; // log2(32)

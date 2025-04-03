@@ -38,10 +38,13 @@ abstract class ApexList<E> implements Iterable<E> {
 
   // --- Core Properties ---
 
+  @override
   int get length; // Required by Iterable
 
+  @override
   bool get isEmpty; // Required by Iterable
 
+  @override
   bool get isNotEmpty; // Required by Iterable
 
   // --- Element Access ---
@@ -49,8 +52,10 @@ abstract class ApexList<E> implements Iterable<E> {
   /// Returns the element at the given [index]. O(log N) complexity.
   E operator [](int index);
 
+  @override
   E get first; // Required by Iterable
 
+  @override
   E get last; // Required by Iterable
 
   // --- Modification Operations (Returning New Instances) ---
@@ -92,6 +97,7 @@ abstract class ApexList<E> implements Iterable<E> {
   // --- Iterable Overrides & Common Methods ---
   // Concrete classes must implement all required methods from Iterable.
 
+  @override
   Iterator<E> get iterator; // Required by Iterable
 
   @override

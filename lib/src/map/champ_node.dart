@@ -1,4 +1,5 @@
 /// Defines the core structures for CHAMP Trie nodes used by ApexMap/ApexSet.
+library;
 
 const int _kHashBits = 32; // Standard Dart hash code size
 const int _kBitPartitionSize = 5; // Hash bits used per level
@@ -367,8 +368,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       // Potential match in sub-node
       final index = Integer.bitCount(nodeMap & (mask - 1));
       final nodeIndex = content.length - 1 - index; // Nodes stored from the end
-      if (nodeIndex < 0 || nodeIndex >= content.length)
+      if (nodeIndex < 0 || nodeIndex >= content.length) {
         return null; // Bounds check
+      }
       final childNode = content[nodeIndex] as ChampNode<K, V>;
       return childNode.get(key, hash, shift + _kBitPartitionSize);
     }

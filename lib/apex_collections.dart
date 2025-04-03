@@ -1,7 +1,7 @@
 /// Support for doing something awesome.
 ///
 /// More dartdocs go here.
-library apex_collections;
+library;
 
 // Export the public APIs
 export 'src/list/apex_list_api.dart';

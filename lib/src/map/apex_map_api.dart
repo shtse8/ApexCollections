@@ -1,4 +1,4 @@
-import 'package:collection/collection.dart'; // For equality
+// For equality
 import 'package:meta/meta.dart';
 import 'apex_map.dart'; // Contains ApexMapImpl and its emptyInstance
 

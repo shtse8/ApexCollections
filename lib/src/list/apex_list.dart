@@ -216,8 +216,9 @@ class ApexListImpl<E> extends ApexList<E> {
     final actualEnd = RangeError.checkValidRange(start, end, _length);
     final subLength = actualEnd - start;
     if (subLength <= 0) return emptyInstance<E>();
-    if (start == 0 && actualEnd == _length)
+    if (start == 0 && actualEnd == _length) {
       return this; // Sublist is the whole list
+    }
 
     // Basic implementation: iterate and add. Inefficient.
     // TODO: Implement efficient slicing using node operations
@@ -570,13 +571,15 @@ class _RrbTreeIterator<E> implements Iterator<E> {
     if (_currentIndex < 0 || _currentIndex >= _list.length) {
       // Or return null / throw? Standard iterators might throw here after exhaustion.
       // Let's stick to the potential null value for _currentElement.
-      if (_currentElement == null)
+      if (_currentElement == null) {
         throw StateError('Iterator current is invalid state');
+      }
     }
-    if (_currentElement == null)
+    if (_currentElement == null) {
       throw StateError(
         'Iterator current is invalid state (null)',
       ); // Should not happen if moveNext true
+    }
     return _currentElement!;
   }
 
