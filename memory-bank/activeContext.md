@@ -1,30 +1,26 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~02:51 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~03:05 UTC+1)
 
--   Project initialized, Memory Bank established, basic Dart package structure confirmed.
--   Detailed **Phase 1 Plan** defined and documented in `memory-bank/phase1-plan.md`.
--   Baseline benchmark results for native Dart and `fast_immutable_collections` (size 10k) documented in `memory-bank/baseline-benchmarks.md`.
+-   Project initialized, Memory Bank established.
+-   Phase 1 Plan defined (`phase1-plan.md`).
+-   Baseline benchmarks run and documented (`baseline-benchmarks.md`).
+-   Initial research summaries for RRB-Trees and CHAMP Tries documented (`research-notes.md`).
+-   `const` feasibility assessed as positive for both structures.
+-   Benchmark suite refined with additional operations (`list_benchmarks.dart`, `map_benchmarks.dart`).
 -   All changes committed and pushed.
 
 ## Current Focus
 
--   **Phase 1: Research - RRB-Trees**
+-   **Phase 1: In-depth Research - RRB-Trees & CHAMP Tries**
 
 ## Next Immediate Steps
 
-1.  **Research RRB-Trees:**
-    -   Analyze Clojure's `core.rrb-vector` implementation notes (`doc/rrb-tree-notes.md`).
-    -   Locate and study the original Bagwell/Rompf paper ("RRB-Trees: Efficient Immutable Vectors").
-    -   Summarize findings regarding structure, operations, performance characteristics, and potential Dart implementation challenges (including `const` compatibility).
-2.  **Research CHAMP Tries:** (After initial RRB-Tree research)
-    -   Study relevant papers and existing implementations.
-    -   Compare with HAMT.
-    -   Summarize findings for Dart implementation.
-3.  **Refine Benchmark Suite:** Based on research, add any missing operations identified in the plan to the benchmark files.
+1.  **Study Primary Sources:** Analyze the detailed algorithms and structures presented in the primary research papers/theses for RRB-Trees (Bagwell/Rompf) and CHAMP Tries (Steindorfer). This is required before implementation can begin.
+2.  **Summarize Findings:** Document the detailed algorithms and implementation considerations in `research-notes.md`.
+3.  **Go/No-Go Decision:** Based on the detailed research, confirm the decision to proceed with RRB-Trees and CHAMP Tries for the initial implementation.
 
 ## Open Questions / Decisions
 
--   Feasibility of implementing RRB-Trees and CHAMP Tries efficiently in Dart.
--   Confirming `const` compatibility for empty collections.
--   Strategies for seamless `Iterable` integration.
+-   Precise implementation details/algorithms for RRB-Tree and CHAMP operations in Dart.
+-   Strategies for seamless `Iterable` integration based on detailed structure understanding.
