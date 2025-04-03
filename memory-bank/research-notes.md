@@ -64,6 +64,19 @@ Based on Peter Horne-Khan's explanation:
 -   **Propagation:** The merged/rebalanced node propagates upwards, potentially triggering merges at higher levels. Redundant root levels are removed.
 
 
+### Concatenation/Rebalancing Details (Based on Horne-Khan Blog - 2025-04-03 ~03:07 UTC+1)
+
+-   **Size Tables:** When nodes are relaxed (not strictly size M), they require an associated 'size table'. This table stores the *cumulative* count of leaf elements contained within or to the left of each corresponding child slot. This allows finding the correct child slot even with variable sizes.
+-   **Relaxed Radix Search:** Navigation uses a two-step process:
+    1.  *Radix Step:* Calculate the approximate slot using bit shifts (`idx >> (BIT_WIDTH * height)`), same as standard vectors.
+    2.  *Linear Scan Step:* Use the size table to step forward from the approximate slot until the correct slot (whose cumulative size is >= index) is found (`while (sizes[slot] <= idx) slot++`). The Search Step Invariant bounds the number of extra linear steps needed.
+-   **Search Step Invariant (`S <= ceil(P/M) + E`):** Confirmed as the core invariant for rebalancing. Allows `E` (e.g., 2) extra slots beyond the optimal count (`ceil(P/M)`) for `P` elements/sub-nodes distributed across `S` actual slots.
+-   **Rebalancing Algorithm (when invariant violated during merge):
+    1.  *Plan Calculation:* Determine the target distribution of elements across slots to satisfy the invariant. Skips slots that are already sufficiently full (e.g., >= `M - E/2` items). Redistributes items from the first underfull slot into subsequent slots.
+    2.  *Plan Execution:* Create new nodes based on the calculated plan, reusing existing nodes/sub-trees wherever possible to minimize copying.
+
+
+
 
 ### Split and Insert-At Algorithms (Summary - 2025-04-03 ~03:00 UTC+1)
 
