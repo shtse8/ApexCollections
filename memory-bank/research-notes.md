@@ -56,4 +56,31 @@ Initial research based on `clojure/core.rrb-vector/doc/rrb-tree-notes.md` and we
 
 ## CHAMP Tries (for `ApexMap`)
 
--   *(Research not yet started)*
+**(Timestamp: 2025-04-03 ~02:55 UTC+1)**
+
+Initial research based on web searches.
+
+### Core Concepts (Preliminary):
+
+-   **Improvement over HAMT:** CHAMP (Compressed Hash-Array Mapped Prefix Trie) is designed as an optimization over HAMT (Hash-Array Mapped Trie), which is used by `fast_immutable_collections`.
+-   **Goals:** Aims for better performance (potentially iteration) and lower memory usage compared to HAMT.
+-   **Mechanism:** Likely involves different node representations or compression techniques within the trie structure compared to HAMT.
+
+### Key Resources Identified:
+
+1.  **Primary Resource (Thesis):**
+    -   Steindorfer, M. *Efficient Immutable Collections*. PhD Thesis. (Link found via Scala issue tracker).
+    -   *Status:* Link available. **Action:** Study for the definitive explanation of CHAMP.
+2.  **Paper Summary/Comparison:**
+    -   [https://wangziqi2013.github.io/paper/2020/08/28/CHAMP.html](https://wangziqi2013.github.io/paper/2020/08/28/CHAMP.html)
+    -   *Status:* Link available. **Action:** Read for a summary of CHAMP vs. HAMT differences and claimed improvements.
+3.  **Implementation (Java):**
+    -   `norswap/triemap` ([https://github.com/norswap/triemap](https://github.com/norswap/triemap))
+    -   *Status:* Link available. **Action:** Browse codebase later for implementation details.
+
+### Initial Research Tasks:
+
+-   [ ] Understand the basic structure of HAMT first (as CHAMP builds upon it).
+-   [ ] Read the summary/comparison resource to grasp the key differences between CHAMP and HAMT.
+-   [ ] Study Steindorfer's thesis/papers for the detailed CHAMP specification.
+-   [ ] Assess feasibility for `const` empty map creation in Dart.
