@@ -318,6 +318,38 @@ class FIC_IListConcatBenchmark extends BenchmarkBase {
   }
 }
 
+class FIC_IListToListBenchmark extends BenchmarkBase {
+  FIC_IListToListBenchmark() : super('IList(FIC).toList');
+  late IList<int> iList;
+
+  @override
+  void setup() {
+    iList = IList(List.generate(listSize, (i) => i));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final nativeList = iList.toList(); // Assuming FIC has toList()
+  }
+}
+
+class FIC_IListFromIterableBenchmark extends BenchmarkBase {
+  FIC_IListFromIterableBenchmark() : super('IList(FIC).fromIterable');
+  late List<int> nativeList; // Source iterable
+
+  @override
+  void setup() {
+    nativeList = List.generate(listSize, (i) => i, growable: false);
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final iList = IList(nativeList); // Constructor acts like fromIterable
+  }
+}
+
 // --- ApexCollections ApexList Benchmarks ---
 
 class ApexListAddBenchmark extends BenchmarkBase {
@@ -465,6 +497,38 @@ class ApexListConcatBenchmark extends BenchmarkBase {
   }
 }
 
+class ApexListToListBenchmark extends BenchmarkBase {
+  ApexListToListBenchmark() : super('ApexList.toList');
+  late ApexList<int> apexList;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final nativeList = apexList.toList();
+  }
+}
+
+class ApexListFromIterableBenchmark extends BenchmarkBase {
+  ApexListFromIterableBenchmark() : super('ApexList.fromIterable');
+  late List<int> nativeList; // Source iterable
+
+  @override
+  void setup() {
+    nativeList = List.generate(listSize, (i) => i, growable: false);
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final apexList = ApexList.from(nativeList);
+  }
+}
+
 // --- Main Runner ---
 
 void main() {
@@ -491,6 +555,8 @@ void main() {
   FIC_IListIterateBenchmark().report();
   FIC_IListSublistBenchmark().report();
   FIC_IListConcatBenchmark().report();
+  FIC_IListToListBenchmark().report();
+  FIC_IListFromIterableBenchmark().report();
 
   // ApexCollections ApexList Benchmarks
   print('\n-- ApexList --');
@@ -502,6 +568,8 @@ void main() {
   ApexListIterateBenchmark().report();
   ApexListSublistBenchmark().report();
   ApexListConcatBenchmark().report();
+  ApexListToListBenchmark().report();
+  ApexListFromIterableBenchmark().report();
 
   print('------------------------------------------');
 }

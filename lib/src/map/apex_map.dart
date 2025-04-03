@@ -512,6 +512,18 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     }
   }
 
+  @override
+  Map<K, V> toMap() {
+    // Create a standard mutable map
+    final map = <K, V>{};
+    // Use the efficient iterator
+    final iter = iterator;
+    while (iter.moveNext()) {
+      map[iter.current.key] = iter.current.value;
+    }
+    return map;
+  }
+
   // --- Added API Methods ---
 
   @override

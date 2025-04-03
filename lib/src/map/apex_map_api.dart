@@ -284,6 +284,21 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// ```
   ApexMap<K, V> clear();
 
+  /// Returns a standard Dart [Map] containing the key-value pairs from this
+  /// `ApexMap`.
+  ///
+  /// The returned map is a mutable copy. The order of entries in the returned
+  /// map is not guaranteed.
+  /// Complexity is O(N).
+  ///
+  /// ```dart
+  /// final apexMap = ApexMap.from({'a': 1, 'b': 2});
+  /// final nativeMap = apexMap.toMap();
+  /// print(nativeMap); // {a: 1, b: 2}
+  /// print(nativeMap is Map<String, int>); // true
+  /// ```
+  Map<K, V> toMap();
+
   /// Applies the function [f] to each key-value pair of the map.
   ///
   /// Iteration order is not guaranteed.

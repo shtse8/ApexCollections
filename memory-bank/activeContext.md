@@ -1,34 +1,34 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~17:27 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~17:43 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
 -   **Phase 3: Implementation & Unit Testing COMPLETE.**
 -   **Phase 4: Performance Optimization & Benchmarking IN PROGRESS.**
-    -   Initial benchmarks for `ApexList` and `ApexMap` completed.
-    -   **ApexMap:** Shows strong performance for bulk modifications (`addAll`, `remove`, `update`) and iteration. Slower on single `add`/`lookup`.
+    -   Benchmarks updated to include conversion operations (`toList`, `toMap`, `fromIterable`, `fromMap`).
+    -   **ApexMap:**
+        -   Shows **excellent** performance for bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), and conversion to native (`toMap`).
+        -   Single `add`/`lookup` performance is acceptable but slower than competitors.
+        -   **CRITICAL ISSUE:** `ApexMap.fromMap` performance is **extremely poor** and needs immediate investigation.
     -   **ApexList:**
-        -   Shows good performance for single `add`/`removeAt`/`lookup`.
-        -   `addAll` optimized using transient `add`.
-        -   `operator+` reverted to iterate/rebuild.
-        -   `removeWhere` uses immutable filter/rebuild.
-        -   `sublist`, `concat(+)` still use iterate/rebuild.
-        -   Iteration performance optimized.
-    -   **FIXED (Partially):** The `removeAt causes node merges/rebalancing` test now passes after implementing immutable merge and steal logic in `RrbInternalNode._rebalanceOrMerge`.
-    -   **KNOWN ISSUE (ApexList):** The `_rebalanceOrMerge` logic is incomplete. The edge case where a node is underfull but cannot steal from neighbors (e.g., neighbors are also minimal size) currently returns unmodified nodes instead of performing a more complex rebalancing or allowing slightly underfull nodes temporarily. This needs proper implementation.
+        -   Shows good performance for single `add` (vs FIC) and `removeAt` (vs both). `addAll` is also good.
+        -   Iteration (`iterateSum`), `removeWhere`, `sublist`, `concat(+)` performance needs improvement.
+        -   Conversion performance (`toList`, `fromIterable`) is significantly slower than FIC and needs optimization.
+    -   **KNOWN ISSUE (ApexList - RRB Tree):** The `_rebalanceOrMerge` logic in `RrbInternalNode` is incomplete for the "Cannot steal" edge case. (Status unchanged)
 
 ## Current Focus
 
--   **Phase 4: Performance Optimization & Benchmarking** (Refining RRB-Tree `removeAt` rebalancing, Optimizing Bulk Ops)
+-   **Phase 4: Performance Optimization & Benchmarking** (Fixing `ApexMap.fromMap`, Optimizing `ApexList` conversions and bulk ops, Refining RRB-Tree `removeAt`)
 
 ## Next Immediate Steps
 
-1.  **(IN PROGRESS) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case identified during testing.
-2.  **Optimize `ApexList` Bulk Operations:** Revisit `sublist`, `operator+` for node-level optimizations. Consider transient builder.
-3.  **Implement Transient Rebalancing:** Add merge/steal logic to the transient path in `_rebalanceOrMerge`.
-4.  **Re-run Benchmarks:** After further optimizations, re-run benchmarks.
-5.  **Begin Documentation:** Start writing basic API documentation.
+1.  **FIX `ApexMap.fromMap` Performance:** Investigate the bottleneck in the `ApexMapImpl.fromMap` factory and implement a fix. **(Highest Priority)**
+2.  **Optimize `ApexList` Conversions:** Improve `toList` and `fromIterable` performance.
+3.  **Optimize `ApexList` Bulk/Range Operations:** Revisit `sublist`, `operator+`, `removeWhere` for node-level or transient optimizations.
+4.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case.
+5.  **Re-run Benchmarks:** After fixes and optimizations, re-run benchmarks.
+6.  **Begin Documentation:** Start writing basic API documentation.
 
 ## Open Questions / Decisions
 

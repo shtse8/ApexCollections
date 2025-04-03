@@ -283,6 +283,38 @@ class FIC_IMapUpdateBenchmark extends BenchmarkBase {
   }
 }
 
+class FIC_IMapToMapBenchmark extends BenchmarkBase {
+  FIC_IMapToMapBenchmark() : super('IMap(FIC).toMap');
+  late IMap<int, String> iMap;
+
+  @override
+  void setup() {
+    iMap = IMap(createTestData(mapSize));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final nativeMap = iMap.unlock; // FIC uses 'unlock' for native conversion
+  }
+}
+
+class FIC_IMapFromMapBenchmark extends BenchmarkBase {
+  FIC_IMapFromMapBenchmark() : super('IMap(FIC).fromMap');
+  late Map<int, String> nativeMap; // Source map
+
+  @override
+  void setup() {
+    nativeMap = createTestData(mapSize);
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final iMap = IMap(nativeMap); // Constructor acts like fromMap
+  }
+}
+
 // --- ApexCollections ApexMap Benchmarks ---
 
 class ApexMapAddBenchmark extends BenchmarkBase {
@@ -407,6 +439,38 @@ class ApexMapUpdateBenchmark extends BenchmarkBase {
   }
 }
 
+class ApexMapToMapBenchmark extends BenchmarkBase {
+  ApexMapToMapBenchmark() : super('ApexMap.toMap');
+  late ApexMap<int, String> apexMap;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final nativeMap = apexMap.toMap();
+  }
+}
+
+class ApexMapFromMapBenchmark extends BenchmarkBase {
+  ApexMapFromMapBenchmark() : super('ApexMap.fromMap');
+  late Map<int, String> nativeMap; // Source map
+
+  @override
+  void setup() {
+    nativeMap = createTestData(mapSize);
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final apexMap = ApexMap.from(nativeMap);
+  }
+}
+
 // --- Main Runner ---
 
 void main() {
@@ -431,6 +495,8 @@ void main() {
   FIC_IMapPutIfAbsentBenchmark().report();
   FIC_IMapUpdateBenchmark().report();
   FIC_IMapIterateBenchmark().report();
+  FIC_IMapToMapBenchmark().report();
+  FIC_IMapFromMapBenchmark().report();
 
   // ApexCollections ApexMap Benchmarks
   print('\n-- ApexMap --');
@@ -440,6 +506,8 @@ void main() {
   ApexMapRemoveBenchmark().report();
   ApexMapUpdateBenchmark().report(); // Covers update & putIfAbsent logic
   ApexMapIterateBenchmark().report();
+  ApexMapToMapBenchmark().report();
+  ApexMapFromMapBenchmark().report();
 
   print('----------------------------------------');
 }
