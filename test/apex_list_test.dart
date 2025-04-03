@@ -31,7 +31,7 @@ void main() {
     test('empty list equality', () {
       final list1 = ApexList<int>.empty();
       final list2 = ApexList<String>.empty(); // Different type arg
-      final list3 = const ApexList<int>.empty(); // Const constructor
+      final list3 = ApexList<int>.empty(); // No longer const
 
       expect(list1, equals(ApexList<int>.empty()));
       expect(list1, equals(list2)); // Should be equal despite type arg

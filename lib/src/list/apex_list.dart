@@ -1,35 +1,47 @@
-import 'package:collection/collection.dart'; // For IterableMixin if needed later
+import 'dart:math'; // For Random
+import 'package:collection/collection.dart'; // For ListEquality
 import 'apex_list_api.dart';
 import 'rrb_node.dart';
 
 /// Concrete implementation of [ApexList] using an RRB-Tree.
 class ApexListImpl<E> extends ApexList<E> {
+  /// The root node of the RRB-Tree. Can be RrbEmptyNode.
   final RrbNode<E> _root;
   // TODO: Add tail/focus buffer for optimization
+
+  /// The number of elements in the list.
   final int _length;
 
-  /// Internal constructor. Use factories like ApexList.empty() or ApexList.from().
-  const ApexListImpl._(this._root, this._length);
+  /// The canonical empty instance.
+  /// The canonical empty instance (internal).
+  static final ApexListImpl _emptyInstance = ApexListImpl._(
+    RrbEmptyNode.instance(),
+    0,
+  );
+
+  /// Public accessor for the canonical empty instance.
+  static ApexListImpl<E> emptyInstance<E>() =>
+      _emptyInstance as ApexListImpl<E>;
+
+  /// Internal constructor. Not const because RrbEmptyNode.instance() isn't const.
+  ApexListImpl._(this._root, this._length);
 
   /// Factory constructor to create from an Iterable.
   factory ApexListImpl.fromIterable(Iterable<E> elements) {
     if (elements.isEmpty) {
-      // How to return the const empty instance? Need access to ApexList.empty() or a static const field.
-      // This requires linking the API and Impl properly, maybe via a shared const instance.
-      // For now, assume ApexList.empty() works (it points to _EmptyApexList).
-      // A better approach might be needed later.
-      return ApexList.empty()
-          as ApexListImpl<
-            E
-          >; // Cast needed, potentially unsafe if empty isn't this type
-      // throw UnimplementedError('Cannot return empty list from impl factory yet');
+      // Return the canonical empty instance of ApexListImpl.
+      // Return the canonical empty instance of ApexListImpl.
+      return _emptyInstance as ApexListImpl<E>;
     }
-    // TODO: Actual implementation using builder/nodes
-    throw UnimplementedError('ApexListImpl.fromIterable');
+    // Basic implementation: start with empty and repeatedly add. Inefficient.
+    // TODO: Actual implementation using builder/nodes for efficiency
+    ApexList<E> list = emptyInstance<E>();
+    for (final element in elements) {
+      list = list.add(element);
+    }
+    // The final list will be an ApexListImpl instance because add returns ApexListImpl.
+    return list as ApexListImpl<E>;
   }
-
-  // --- Core Properties ---
-
   @override
   int get length => _length;
 
@@ -43,10 +55,12 @@ class ApexListImpl<E> extends ApexList<E> {
 
   @override
   E operator [](int index) {
-    if (index < 0 || index >= _length) {
+    // Check length first for a faster error in the empty case.
+    if (isEmpty || index < 0 || index >= _length) {
       throw RangeError.index(index, this, 'index', null, _length);
     }
     // TODO: Incorporate tail/focus check before accessing root
+    // _root.get will throw if _root is RrbEmptyNode, but the length check handles it first.
     return _root.get(index);
   }
 
@@ -67,16 +81,24 @@ class ApexListImpl<E> extends ApexList<E> {
   @override
   ApexList<E> add(E value) {
     // TODO: Handle tail/focus optimization for amortized O(1) append.
-    // This basic implementation delegates directly to the root node's add method.
+    // Delegate directly to the root node's add method.
+    // RrbEmptyNode.add returns a new RrbLeafNode.
     final newRoot = _root.add(value);
-    // Note: _root.add might return a node of increased height if the root splits.
+    // Note: add might return a node of increased height if the root splits.
     return ApexListImpl._(newRoot, _length + 1);
   }
 
   @override
   ApexList<E> addAll(Iterable<E> iterable) {
+    // Basic implementation: repeatedly call add. Inefficient for large iterables.
     // TODO: Efficient bulk add, possibly using transient builder
-    throw UnimplementedError('addAll');
+    if (iterable.isEmpty) return this;
+
+    ApexList<E> current = this;
+    for (final element in iterable) {
+      current = current.add(element); // Repeatedly calls the add method
+    }
+    return current;
   }
 
   @override
@@ -87,46 +109,132 @@ class ApexListImpl<E> extends ApexList<E> {
       'index',
       _length + 1,
     ); // Allow insertion at end
-    // TODO: Implement using node operations (split/concat or specialized insert)
-    throw UnimplementedError('insert');
+    // Basic implementation using sublist and concatenation. Inefficient.
+    // TODO: Implement using efficient node operations (split/concat or specialized insert)
+    if (index == _length) {
+      // Optimization: Inserting at the end is just 'add'
+      return add(value);
+    }
+    if (index == 0) {
+      // Optimization: Inserting at the beginning
+      // TODO: Implement efficient prepend
+      return ApexList.from([value, ...this]); // Inefficient fallback
+    }
+
+    // General case: split, add, concat (relies on sublist and +)
+    // These operations are currently unimplemented or inefficient.
+    final firstPart = sublist(0, index);
+    final secondPart = sublist(index); // sublist from index to end
+    // This relies on operator+ being implemented, which currently throws.
+    // Uses the basic (inefficient) sublist and operator+ implementations.
+    return firstPart.add(value) + secondPart;
   }
 
   @override
   ApexList<E> insertAll(int index, Iterable<E> iterable) {
     RangeError.checkValidIndex(index, this, 'index', _length + 1);
-    // TODO: Implement efficient bulk insert
-    throw UnimplementedError('insertAll');
+    // Basic implementation: repeatedly call insert. Very inefficient.
+    // TODO: Implement efficient bulk insert, possibly using transients or node concatenation.
+    if (iterable.isEmpty) return this;
+
+    ApexList<E> current = this;
+    int offset = 0; // Keep track of insertion index shift
+    for (final element in iterable) {
+      current = current.insert(index + offset, element);
+      offset++;
+    }
+    return current;
   }
 
   @override
   ApexList<E> removeAt(int index) {
     RangeError.checkValidIndex(index, this);
-    // TODO: Implement using node operations
-    throw UnimplementedError('removeAt');
+    if (isEmpty) {
+      // Should be caught by checkValidIndex, but good practice
+      throw RangeError.index(
+        index,
+        this,
+        'index',
+        'Cannot remove from empty list',
+        0,
+      );
+    }
+
+    // TODO: Handle tail/focus optimization
+
+    final newRoot = _root.removeAt(index);
+
+    if (newRoot == null || newRoot.isEmptyNode) {
+      // The root node became empty
+      return _emptyInstance
+          as ApexListImpl<E>; // Return canonical impl empty list
+    } else if (identical(newRoot, _root)) {
+      // No change occurred (shouldn't happen if index is valid and list not empty)
+      return this;
+    } else {
+      // Root changed (or potentially collapsed)
+      return ApexListImpl._(newRoot, _length - 1);
+    }
   }
 
   @override
   ApexList<E> remove(E value) {
-    // TODO: Find index first (O(N)), then call removeAt (O(log N))
-    throw UnimplementedError('remove');
+    final index = indexOf(value); // Uses the basic O(N) indexOf for now
+    if (index == -1) {
+      return this; // Element not found, return original list
+    }
+    // Element found, remove it using the existing removeAt
+    return removeAt(index);
   }
 
   @override
   ApexList<E> removeWhere(bool Function(E element) test) {
-    // TODO: Iterate and build a new list, potentially using transients
-    throw UnimplementedError('removeWhere');
+    // Basic implementation: build a new list excluding matching elements. Inefficient.
+    // TODO: Iterate and build a new list more efficiently, potentially using transients
+    final List<E> keptElements = [];
+    bool changed = false;
+    for (final element in this) {
+      if (test(element)) {
+        changed = true; // Mark that at least one element was removed
+      } else {
+        keptElements.add(element);
+      }
+    }
+
+    if (!changed) {
+      return this; // No elements matched the test, return original list
+    }
+    if (keptElements.isEmpty) {
+      return emptyInstance<E>(); // All elements removed
+    }
+    // Create a new list from the elements that were kept using the now implemented factory.
+    return ApexList.from(keptElements);
   }
 
   @override
   ApexList<E> sublist(int start, [int? end]) {
     final actualEnd = RangeError.checkValidRange(start, end, _length);
+    final subLength = actualEnd - start;
+    if (subLength <= 0) return emptyInstance<E>();
+    if (start == 0 && actualEnd == _length)
+      return this; // Sublist is the whole list
+
+    // Basic implementation: iterate and add. Inefficient.
     // TODO: Implement efficient slicing using node operations
-    throw UnimplementedError('sublist');
+    ApexList<E> result = emptyInstance<E>();
+    for (int i = start; i < actualEnd; i++) {
+      result = result.add(this[i]); // Uses inefficient add and lookup
+    }
+    return result;
   }
 
   @override
   ApexList<E> update(int index, E value) {
     RangeError.checkValidIndex(index, this);
+    // Length check handles empty case before calling _root.update
+    if (isEmpty) {
+      throw RangeError.index(index, this, 'index', null, 0);
+    }
     // TODO: Incorporate tail/focus check
     final newRoot = _root.update(index, value);
     if (identical(newRoot, _root)) return this;
@@ -135,9 +243,13 @@ class ApexListImpl<E> extends ApexList<E> {
 
   @override
   ApexList<E> operator +(ApexList<E> other) {
+    if (other.isEmpty) return this;
+    if (isEmpty) return other;
+
     if (other is ApexListImpl<E>) {
+      // Basic implementation using addAll. Inefficient.
       // TODO: Implement efficient concatenation using node operations
-      throw UnimplementedError('concat');
+      return addAll(other);
     } else {
       // Fallback for other Iterable types
       return ApexList.from([...this, ...other]);
@@ -359,19 +471,84 @@ class ApexListImpl<E> extends ApexList<E> {
     }
   }
 
-  // TODO: Implement == and hashCode based on structural equality.
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is ApexList<E> &&
-          length == other.length &&
-          ListEquality<E>().equals(
-            toList(growable: false),
-            other.toList(growable: false),
-          )); // Inefficient default
+  // --- Added API Methods ---
 
   @override
-  int get hashCode => ListEquality<E>().hash(toList(growable: false)); // Inefficient default
+  int indexOf(E element, [int start = 0]) {
+    if (start < 0) start = 0;
+    if (start >= _length) return -1;
+    // TODO: Optimize search (e.g., using iterator or specialized node search)
+    for (int i = start; i < _length; i++) {
+      if (this[i] == element) return i;
+    }
+    return -1;
+  }
+
+  @override
+  int lastIndexOf(E element, [int? end]) {
+    int start = end ?? _length - 1;
+    if (start < 0) return -1;
+    if (start >= _length) start = _length - 1;
+    // TODO: Optimize search
+    for (int i = start; i >= 0; i--) {
+      if (this[i] == element) return i;
+    }
+    return -1;
+  }
+
+  @override
+  ApexList<E> clear() {
+    return _emptyInstance
+        as ApexListImpl<E>; // Return canonical impl empty list
+  }
+
+  @override
+  Map<int, E> asMap() {
+    // TODO: Optimize map creation
+    final map = <int, E>{};
+    for (int i = 0; i < _length; i++) {
+      map[i] = this[i];
+    }
+    return map; // Return standard mutable map for now
+  }
+
+  @override
+  ApexList<E> sort([int Function(E a, E b)? compare]) {
+    final mutableList = toList();
+    mutableList.sort(compare);
+    // TODO: More efficient sort that builds the tree directly?
+    return ApexList.from(mutableList);
+  }
+
+  @override
+  ApexList<E> shuffle([Random? random]) {
+    final mutableList = toList();
+    mutableList.shuffle(random);
+    return ApexList.from(mutableList);
+  }
+
+  // TODO: Implement efficient == and hashCode based on structural equality.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! ApexList<E>) return false;
+    if (length != other.length) return false;
+    if (isEmpty && other.isEmpty) return true; // Both empty are equal
+    // TODO: Optimize equality check using iterators or tree comparison
+    return ListEquality<E>().equals(
+      toList(growable: false),
+      other.toList(growable: false),
+    ); // Inefficient default
+  }
+
+  @override
+  int get hashCode {
+    if (isEmpty) return 0; // Consistent hash for empty
+    // TODO: Optimize hash calculation using tree structure
+    return ListEquality<E>().hash(
+      toList(growable: false),
+    ); // Inefficient default
+  }
 }
 
 /// An iterator that traverses the elements of an RRB-Tree based ApexList.

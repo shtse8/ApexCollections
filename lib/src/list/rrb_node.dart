@@ -5,6 +5,9 @@ const int _kLog2BranchingFactor = 5; // log2(32)
 
 /// Base class for RRB-Tree nodes.
 abstract class RrbNode<E> {
+  /// Const constructor for subclasses.
+  const RrbNode();
+
   /// The height of the subtree rooted at this node.
   /// Leaf nodes have height 0.
   int get height;
@@ -38,6 +41,9 @@ abstract class RrbNode<E> {
   /// This might involve node merges and decreasing tree height.
   /// Returns `null` if the node becomes empty after removal.
   RrbNode<E>? removeAt(int index);
+
+  /// Returns true if this node represents the canonical empty node.
+  bool get isEmptyNode => false;
 }
 
 /// Represents an internal node (branch) in the RRB-Tree.
@@ -351,6 +357,61 @@ class RrbLeafNode<E> extends RrbNode<E> {
     final newElements = List<E>.of(elements)..removeAt(index);
     return RrbLeafNode<E>(newElements);
   }
+}
+
+/// Represents the canonical empty RRB-Tree node.
+class RrbEmptyNode<E> extends RrbNode<E> {
+  static final RrbEmptyNode _instance = RrbEmptyNode._();
+
+  /// Singleton instance of the empty node.
+  static RrbEmptyNode<E> instance<E>() => _instance as RrbEmptyNode<E>;
+
+  const RrbEmptyNode._();
+
+  @override
+  int get height => 0; // Or -1? Let's use 0 for consistency with empty leaf concept.
+
+  @override
+  int get count => 0;
+
+  @override
+  bool get isEmptyNode => true;
+
+  @override
+  E get(int index) =>
+      throw RangeError.index(
+        index,
+        this,
+        'index',
+        'Cannot index into an empty node',
+        0,
+      );
+
+  @override
+  RrbNode<E> update(int index, E value) =>
+      throw RangeError.index(
+        index,
+        this,
+        'index',
+        'Cannot update an empty node',
+        0,
+      );
+
+  @override
+  RrbNode<E> add(E value) {
+    // Adding to empty creates a new leaf node with the single element.
+    return RrbLeafNode<E>([value]);
+  }
+
+  @override
+  RrbNode<E>? removeAt(int index) =>
+      throw RangeError.index(
+        index,
+        this,
+        'index',
+        'Cannot remove from an empty node',
+        0,
+      );
 }
 
 // TODO: Implement factory constructors or static methods for creating nodes.

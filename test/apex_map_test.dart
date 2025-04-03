@@ -29,7 +29,7 @@ void main() {
     test('empty map equality', () {
       final map1 = ApexMap<int, String>.empty();
       final map2 = ApexMap<String, int>.empty(); // Different type args
-      final map3 = const ApexMap<int, String>.empty(); // Const constructor
+      final map3 = ApexMap<int, String>.empty(); // No longer const
 
       expect(map1, equals(ApexMap<int, String>.empty()));
       expect(map1, equals(map2)); // Should be equal despite type args

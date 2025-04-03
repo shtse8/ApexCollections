@@ -7,6 +7,9 @@ const List<Object?> _emptyContent = []; // Canonical empty content list
 
 /// Base class for CHAMP Trie nodes.
 abstract class ChampNode<K, V> {
+  /// Const constructor for subclasses.
+  const ChampNode();
+
   /// Retrieves the value associated with [key] within this subtree,
   /// returning `null` if the key is not found.
   /// Requires the full [hash] of the key and the current [shift] level.
@@ -35,6 +38,9 @@ abstract class ChampNode<K, V> {
   /// Returns the total number of entries in the subtree rooted at this node.
   /// Note: This might be expensive for internal nodes if not cached.
   int get arity;
+
+  /// Returns true if this node represents the canonical empty node.
+  bool get isEmptyNode => false;
 }
 
 /// Represents a standard internal node in the CHAMP Trie.
@@ -668,5 +674,41 @@ class Integer {
 }
 
 // TODO: Define a shared empty node instance (likely an InternalNode with 0 maps/content).
+/// Represents the canonical empty CHAMP Trie node.
+class ChampEmptyNode<K, V> extends ChampNode<K, V> {
+  static final ChampEmptyNode _instance = ChampEmptyNode._();
+
+  /// Singleton instance of the empty node.
+  static ChampEmptyNode<K, V> instance<K, V>() =>
+      _instance as ChampEmptyNode<K, V>;
+
+  const ChampEmptyNode._();
+
+  @override
+  int get arity => 0;
+
+  @override
+  bool get isEmpty => true;
+
+  @override
+  bool get isEmptyNode => true;
+
+  @override
+  V? get(K key, int hash, int shift) => null;
+
+  @override
+  ChampNode<K, V> add(K key, V value, int hash, int shift) {
+    // Adding to empty creates a new InternalNode with a single data entry.
+    final bitpos = 1 << ((hash >> shift) & (_kBranchingFactor - 1));
+    return ChampInternalNode<K, V>(bitpos, 0, [key, value]);
+  }
+
+  @override
+  ChampNode<K, V> remove(K key, int hash, int shift /*, MutableFlag removed*/) {
+    // Removing from empty returns empty.
+    return this;
+  }
+}
+
 // TODO: Implement factory constructors or static methods for creating nodes.
 // TODO: Implement the helper methods (_replaceDataWithNode, _insertData, _removeData, _removeNode)

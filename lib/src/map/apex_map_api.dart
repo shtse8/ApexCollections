@@ -1,6 +1,6 @@
 import 'package:collection/collection.dart'; // For equality
 import 'package:meta/meta.dart';
-import 'apex_map.dart'; // Import the concrete implementation
+import 'apex_map.dart'; // Contains ApexMapImpl and its emptyInstance
 
 /// Abstract definition for an immutable, persistent map based on CHAMP Tries.
 ///
@@ -12,23 +12,27 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// Creates an empty ApexMap.
   ///
   /// This should be a const constructor pointing to a shared empty instance.
-  const factory ApexMap.empty() = _EmptyApexMap<K, V>; // Implementation detail
+  /// Creates an empty ApexMap.
+  /// Returns the canonical empty map instance.
+  factory ApexMap.empty() => ApexMapImpl.emptyInstance<K, V>();
 
   /// Const generative constructor for subclasses.
   const ApexMap();
 
   /// Creates an ApexMap from an existing map.
   factory ApexMap.from(Map<K, V> map) {
-    // TODO: Implementation using a transient builder for efficiency
-    // Delegate to implementation factory
+    // Delegate to the implementation's factory constructor.
     return ApexMapImpl.fromMap(map);
   }
 
   /// Creates an ApexMap from an iterable of map entries.
   factory ApexMap.fromEntries(Iterable<MapEntry<K, V>> entries) {
     // TODO: Implementation using a transient builder for efficiency
+    // Placeholder for the actual implementation class constructor
+    // return ApexMapImpl<K, V>.fromEntries(entries);
     if (entries.isEmpty) return ApexMap.empty();
-    throw UnimplementedError('ApexMap.fromEntries');
+    // TODO: Implement ApexMapImpl.fromEntries
+    throw UnimplementedError('ApexMapImpl.fromEntries needs implementation');
   }
 
   // --- Core Properties ---
@@ -58,6 +62,7 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   // --- Element Access ---
 
   /// Returns the value for the given [key] or `null` if [key] is not in the map.
+  /// Expected O(log N) average complexity.
   V? operator [](K key);
 
   /// Returns `true` if this map contains the given [key].
@@ -71,6 +76,7 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
 
   /// Returns a new map with the [key]/[value] pair added or updated.
   /// If [key] already exists, its value is replaced.
+  /// Expected O(log N) average complexity.
   ApexMap<K, V> add(K key, V value);
 
   /// Returns a new map with all key-value pairs from [other] added.
@@ -78,11 +84,18 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   ApexMap<K, V> addAll(Map<K, V> other); // Accepts standard Map
 
   /// Returns a new map with the entry for [key] removed, if it exists.
+  /// Expected O(log N) average complexity.
   ApexMap<K, V> remove(K key);
 
   /// Returns a new map where the value for [key] is updated.
   /// If [key] exists, applies [update] to the existing value.
   /// If [key] does not exist, calls [ifAbsent] to get a new value and adds it.
+  /// Returns a new map where the value for [key] is updated.
+  /// If [key] exists, applies [update] to the existing value.
+  /// If [key] does not exist and [ifAbsent] is provided, calls [ifAbsent]
+  /// to get a new value and adds it. If [ifAbsent] is not provided,
+  /// the map remains unchanged if the key is absent.
+  /// Expected O(log N) average complexity.
   ApexMap<K, V> update(
     K key,
     V Function(V value) update, {
@@ -105,208 +118,35 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   // --- Iterable Overrides & Common Methods ---
 
   @override
-  Iterator<MapEntry<K, V>> get iterator;
+  Iterator<MapEntry<K, V>> get iterator; // Required by Iterable
 
-  // TODO: Consider equality (operator ==) and hashCode implementation details.
-  // TODO: Consider other common Map/Iterable methods (map, where, etc.)
-}
+  /// Returns a new map containing all entries that satisfy the given [predicate].
+  ApexMap<K, V> removeWhere(bool Function(K key, V value) predicate);
 
-// Concrete implementation for the empty map singleton
-class _EmptyApexMap<K, V> extends ApexMap<K, V> {
-  const _EmptyApexMap();
+  /// Returns an empty map of the same type.
+  ApexMap<K, V> clear();
 
-  @override
-  int get length => 0;
+  /// Applies the function [f] to each key-value pair of the map.
+  void forEachEntry(void Function(K key, V value) f);
 
-  @override
-  bool get isEmpty => true;
-
-  @override
-  bool get isNotEmpty => false;
-
-  @override
-  Iterable<K> get keys => const Iterable.empty();
-
-  @override
-  Iterable<V> get values => const Iterable.empty();
-
-  @override
-  V? operator [](K key) => null;
-
-  @override
-  bool containsKey(K key) => false;
-
-  @override
-  bool containsValue(V value) => false;
-
-  @override
-  ApexMap<K, V> add(K key, V value) {
-    // TODO: Return a concrete ApexMap implementation with one entry
-    throw UnimplementedError('Add on empty map should create a new map');
-  }
-
-  @override
-  ApexMap<K, V> addAll(Map<K, V> other) => ApexMap.from(other);
-
-  @override
-  ApexMap<K, V> remove(K key) => this;
-
-  @override
-  ApexMap<K, V> update(
-    K key,
-    V Function(V value) update, {
-    V Function()? ifAbsent,
-  }) {
-    if (ifAbsent != null) {
-      return add(key, ifAbsent());
-    }
-    return this; // Key doesn't exist, nothing to update
-  }
-
-  @override
-  ApexMap<K, V> updateAll(V Function(K key, V value) update) => this; // No entries to update
-
-  @override
-  V putIfAbsent(K key, V Function() ifAbsent) {
-    // This implementation is tricky for an immutable empty map.
-    // It conceptually needs to return the *value* but the operation
-    // implies a potential *modification* (returning a new map).
-    // A real implementation would likely handle this within its structure.
-    // For the empty map, it always adds.
-    // We cannot return the new map instance here based on the signature.
-    // This highlights a potential API design challenge for putIfAbsent.
-    // Let's return the computed value, acknowledging the map itself isn't returned.
-    return ifAbsent();
-    // throw UnimplementedError('putIfAbsent on empty map needs careful API design');
-  }
-
-  // --- Iterable implementations ---
-  @override
-  Iterator<MapEntry<K, V>> get iterator => const <Never>[].iterator;
-
-  // Default implementations for other Iterable methods (any, every, etc.)
-  // can often be derived from iterator and length, potentially via a mixin
-  // if needed later, but let's keep it explicit for now for clarity.
-
-  @override
-  bool any(bool Function(MapEntry<K, V> element) test) => false;
-
-  @override
-  Iterable<T> cast<T>() => <T>[]; // Or ApexMap<RK, RV>.empty() if K,V match T? Needs thought.
-
-  @override
-  bool contains(Object? element) => false;
-
-  @override
-  MapEntry<K, V> elementAt(int index) => throw RangeError.index(index, this);
-
-  @override
-  bool every(bool Function(MapEntry<K, V> element) test) => true;
-
-  @override
-  Iterable<T> expand<T>(
-    Iterable<T> Function(MapEntry<K, V> element) toElements,
-  ) => const [];
-
-  @override
-  MapEntry<K, V> get first => throw StateError('No element');
-
-  @override
-  MapEntry<K, V> firstWhere(
-    bool Function(MapEntry<K, V> element) test, {
-    MapEntry<K, V> Function()? orElse,
-  }) {
-    if (orElse != null) return orElse();
-    throw StateError('No element');
-  }
-
-  @override
-  T fold<T>(
-    T initialValue,
-    T Function(T previousValue, MapEntry<K, V> element) combine,
-  ) => initialValue;
-
-  @override
-  Iterable<MapEntry<K, V>> followedBy(Iterable<MapEntry<K, V>> other) => other;
-
-  @override
-  void forEach(void Function(MapEntry<K, V> element) action) {}
-
-  @override
-  String join([String separator = '']) => '';
-
-  @override
-  MapEntry<K, V> get last => throw StateError('No element');
-
-  @override
-  MapEntry<K, V> lastWhere(
-    bool Function(MapEntry<K, V> element) test, {
-    MapEntry<K, V> Function()? orElse,
-  }) {
-    if (orElse != null) return orElse();
-    throw StateError('No element');
-  }
-
-  @override
-  Iterable<T> map<T>(T Function(MapEntry<K, V> e) convert) => const [];
-
-  @override
-  MapEntry<K, V> reduce(
-    MapEntry<K, V> Function(MapEntry<K, V> value, MapEntry<K, V> element)
-    combine,
-  ) => throw StateError('No element');
-
-  @override
-  MapEntry<K, V> get single => throw StateError('No element');
-
-  @override
-  MapEntry<K, V> singleWhere(
-    bool Function(MapEntry<K, V> element) test, {
-    MapEntry<K, V> Function()? orElse,
-  }) {
-    if (orElse != null) return orElse();
-    throw StateError('No element');
-  }
-
-  @override
-  Iterable<MapEntry<K, V>> skip(int count) {
-    RangeError.checkNotNegative(count, 'count');
-    return const [];
-  }
-
-  @override
-  Iterable<MapEntry<K, V>> skipWhile(
-    bool Function(MapEntry<K, V> value) test,
-  ) => const [];
-
-  @override
-  Iterable<MapEntry<K, V>> take(int count) {
-    RangeError.checkNotNegative(count, 'count');
-    return const [];
-  }
-
-  @override
-  Iterable<MapEntry<K, V>> takeWhile(
-    bool Function(MapEntry<K, V> value) test,
-  ) => const [];
-
-  @override
-  List<MapEntry<K, V>> toList({bool growable = true}) => [];
-
-  @override
-  Set<MapEntry<K, V>> toSet() => {};
-
-  @override
-  Iterable<MapEntry<K, V>> where(bool Function(MapEntry<K, V> element) test) =>
-      const [];
-
-  @override
-  Iterable<T> whereType<T>() => const [];
+  /// Returns a new map where all entries of this map have been transformed
+  /// by the given [convert] function.
+  ApexMap<K2, V2> mapEntries<K2, V2>(
+    MapEntry<K2, V2> Function(K key, V value) convert,
+  );
 
   // --- Equality and HashCode ---
-  @override
-  bool operator ==(Object other) => other is ApexMap && other.isEmpty;
 
+  /// Compares this map to [other] for equality.
+  /// Two ApexMaps are equal if they have the same length and contain the same
+  /// key-value pairs. Order doesn't matter.
   @override
-  int get hashCode => 0; // Consistent hash code for empty map
+  bool operator ==(Object other);
+
+  /// Returns the hash code for this map.
+  /// The hash code is based on the keys and values in the map.
+  @override
+  int get hashCode;
 }
+
+// _EmptyApexMap class removed.
