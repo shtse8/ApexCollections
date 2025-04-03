@@ -66,9 +66,11 @@ class ApexListImpl<E> extends ApexList<E> {
 
   @override
   ApexList<E> add(E value) {
-    // TODO: Handle tail/focus optimization
-    // TODO: Call _root.add or create new root if needed
-    throw UnimplementedError('add');
+    // TODO: Handle tail/focus optimization for amortized O(1) append.
+    // This basic implementation delegates directly to the root node's add method.
+    final newRoot = _root.add(value);
+    // Note: _root.add might return a node of increased height if the root splits.
+    return ApexListImpl._(newRoot, _length + 1);
   }
 
   @override
