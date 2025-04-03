@@ -34,6 +34,14 @@ Initial research based on `clojure/core.rrb-vector/doc/rrb-tree-notes.md` and we
     -   `core.rrb-vector` (Clojure) - *Note: This library seems to be the source of the notes file, not necessarily a direct RRB implementation itself? Needs clarification.*
     -   *Status:* Links available. **Action:** Browse codebases for structural patterns and algorithm implementations after understanding the core concepts from papers.
 
+
+### Core Concepts (Initial Summary - 2025-04-03 ~02:53 UTC+1)
+
+-   **Foundation:** Extends standard persistent vectors (wide, fixed-branching-factor trees).
+-   **Key Improvement:** Enables efficient **concatenation, insert-at, and splits** in **O(log N)** time.
+-   **Preserved Performance:** Maintains fast **O(log N) indexing (lookup), updates, and iteration** speeds of standard vectors.
+-   **"Relaxed" Invariant:** Uses less strict balancing/node fullness rules, allowing efficient structural sharing and modification for operations like concat/slice without full tree rewrites.
+
 ### Initial Research Tasks:
 
 -   [ ] Read and summarize the core concepts from the primary Bagwell/Rompf (2011) paper.
