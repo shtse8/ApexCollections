@@ -65,16 +65,99 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- Helper methods for node modification (Internal - Defined Before Use) ---
 
-  /// Creates a new content array with data at [dataIndex] replaced by [newNode].
+  /// Creates a new content array with data payload at logical [dataIndex]
+  /// replaced by [newNode].
   List<Object?> _replaceDataWithNode(int dataIndex, ChampNode<K, V> newNode) {
-    // Placeholder - needs correct index math for dual-growth array
-    throw UnimplementedError("_replaceDataWithNode needs correct index math");
+    final oldDataLen = dataArity * 2;
+    final oldNodeLen = nodeArity;
+    final newDataLen = oldDataLen - 2; // Removing key/value
+    final newNodeLen = oldNodeLen + 1; // Adding node pointer
+    final newContent = List<Object?>.filled(newDataLen + newNodeLen, null);
+
+    // Calculate the actual array index for the data to remove
+    final payloadIndexToRemove = dataIndex * 2;
+    // Calculate the logical node index where the new node should be inserted
+    // This depends on the bit position corresponding to the removed data.
+    // Assume we can calculate `nodeIndexToInsert`.
+    // int nodeIndexToInsert = _calculateNodeIndexForData(dataIndex); // Fictional helper
+    int nodeIndexToInsert = 0; // Placeholder - MUST BE CALCULATED CORRECTLY
+    final nodeArrayIndexToInsert = newDataLen + nodeIndexToInsert;
+
+    // 1. Copy data elements before the removal index
+    List.copyRange(newContent, 0, content, 0, payloadIndexToRemove);
+
+    // 2. Copy data elements after the removal index (shifting left by 2)
+    List.copyRange(
+      newContent,
+      payloadIndexToRemove,
+      content,
+      payloadIndexToRemove + 2,
+      oldDataLen,
+    );
+
+    // 3. Copy node elements before the insertion index
+    List.copyRange(
+      newContent,
+      newDataLen,
+      content,
+      oldDataLen,
+      oldDataLen + nodeIndexToInsert,
+    );
+
+    // 4. Insert the new node pointer
+    newContent[nodeArrayIndexToInsert] = newNode;
+
+    // 5. Copy node elements after the insertion index (shifting right by 1)
+    List.copyRange(
+      newContent,
+      nodeArrayIndexToInsert + 1,
+      content,
+      oldDataLen + nodeIndexToInsert,
+      oldDataLen + oldNodeLen,
+    );
+
+    // WARNING: This implementation is complex and likely incorrect without
+    // the proper calculation of `nodeIndexToInsert` based on the original bitpos.
+    throw UnimplementedError(
+      "_replaceDataWithNode needs correct index math and bitpos context",
+    );
+    // return newContent;
   }
 
-  /// Creates a new content array with [key]/[value] inserted at [dataIndex].
+  /// Creates a new content array with [key]/[value] inserted at the logical [dataIndex].
   List<Object?> _insertData(int dataIndex, K key, V value) {
-    // Placeholder - needs correct index math for dual-growth array
-    throw UnimplementedError("_insertData needs correct index math");
+    final oldDataLen = dataArity * 2;
+    final oldNodeLen = nodeArity;
+    final newDataLen = oldDataLen + 2;
+    final newContent = List<Object?>.filled(newDataLen + oldNodeLen, null);
+
+    // 1. Copy data elements before the insertion index
+    final payloadIndex = dataIndex * 2;
+    List.copyRange(newContent, 0, content, 0, payloadIndex);
+
+    // 2. Insert the new key-value pair
+    newContent[payloadIndex] = key;
+    newContent[payloadIndex + 1] = value;
+
+    // 3. Copy data elements after the insertion index
+    List.copyRange(
+      newContent,
+      payloadIndex + 2,
+      content,
+      payloadIndex,
+      oldDataLen,
+    );
+
+    // 4. Copy all node elements (shifting them by 2 positions)
+    List.copyRange(
+      newContent,
+      newDataLen,
+      content,
+      oldDataLen,
+      oldDataLen + oldNodeLen,
+    );
+
+    return newContent;
   }
 
   /// Creates a sub-node when two entries collide at the current level.
@@ -127,18 +210,132 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   }
 
   List<Object?> _removeData(int dataIndex) {
-    // Placeholder - needs correct index math for dual-growth array
-    throw UnimplementedError("_removeData needs correct index math");
+    final oldDataLen = dataArity * 2;
+    final oldNodeLen = nodeArity;
+    final newDataLen = oldDataLen - 2;
+    final newContent = List<Object?>.filled(newDataLen + oldNodeLen, null);
+
+    // 1. Copy data elements before the removal index
+    final payloadIndex = dataIndex * 2;
+    List.copyRange(newContent, 0, content, 0, payloadIndex);
+
+    // 2. Copy data elements after the removal index (shifting left by 2)
+    List.copyRange(
+      newContent,
+      payloadIndex,
+      content,
+      payloadIndex + 2,
+      oldDataLen,
+    );
+
+    // 3. Copy all node elements (shifting left by 2)
+    List.copyRange(
+      newContent,
+      newDataLen,
+      content,
+      oldDataLen,
+      oldDataLen + oldNodeLen,
+    );
+
+    return newContent;
   }
 
   List<Object?> _removeNode(int nodeLocalIndex) {
-    // Placeholder - needs correct index math for dual-growth array
-    throw UnimplementedError("_removeNode needs correct index math");
+    final oldDataLen = dataArity * 2;
+    final oldNodeLen = nodeArity;
+    final newNodeLen = oldNodeLen - 1;
+    final newContent = List<Object?>.filled(oldDataLen + newNodeLen, null);
+
+    // Calculate the actual array index for the node to remove (from the end)
+    // nodeLocalIndex is the index within the conceptual node array (0 to nodeArity-1)
+    // The actual index in the content array is calculated from the end.
+    final nodeIndexToRemove =
+        oldDataLen + nodeLocalIndex; // Index relative to start of node section
+    // which is at oldDataLen
+
+    // 1. Copy all data elements
+    List.copyRange(newContent, 0, content, 0, oldDataLen);
+
+    // 2. Copy node elements before the removal index
+    List.copyRange(
+      newContent,
+      oldDataLen,
+      content,
+      oldDataLen,
+      nodeIndexToRemove,
+    );
+
+    // 3. Copy node elements after the removal index (shifting left by 1)
+    List.copyRange(
+      newContent,
+      nodeIndexToRemove,
+      content,
+      nodeIndexToRemove + 1,
+      oldDataLen + oldNodeLen,
+    );
+
+    return newContent;
   }
 
   List<Object?> _replaceNodeWithData(int nodeLocalIndex, K key, V value) {
-    // Placeholder - needs correct index math for dual-growth array
-    throw UnimplementedError("_replaceNodeWithData needs correct index math");
+    final oldDataLen = dataArity * 2;
+    final oldNodeLen = nodeArity;
+    final newDataLen = oldDataLen + 2; // Adding key/value
+    final newNodeLen = oldNodeLen - 1; // Removing node pointer
+    final newContent = List<Object?>.filled(newDataLen + newNodeLen, null);
+
+    // Calculate the actual array index for the node to remove
+    final nodeIndexToRemove = oldDataLen + nodeLocalIndex;
+
+    // Calculate the logical data index where the new key/value should be inserted
+    // This depends on the bit position corresponding to the removed node.
+    // We need the original bitpos that led to this nodeLocalIndex.
+    // This requires more context than available in this helper alone.
+    // For now, assume we can calculate `dataIndexToInsert`.
+    // int dataIndexToInsert = _calculateDataIndexForNode(nodeLocalIndex); // Fictional helper
+    int dataIndexToInsert = 0; // Placeholder - MUST BE CALCULATED CORRECTLY
+    final payloadIndexToInsert = dataIndexToInsert * 2;
+
+    // 1. Copy data elements before the insertion point
+    List.copyRange(newContent, 0, content, 0, payloadIndexToInsert);
+
+    // 2. Insert the new key-value pair
+    newContent[payloadIndexToInsert] = key;
+    newContent[payloadIndexToInsert + 1] = value;
+
+    // 3. Copy data elements after the insertion point
+    List.copyRange(
+      newContent,
+      payloadIndexToInsert + 2,
+      content,
+      payloadIndexToInsert,
+      oldDataLen,
+    );
+
+    // 4. Copy node elements before the removal index
+    List.copyRange(
+      newContent,
+      newDataLen,
+      content,
+      oldDataLen,
+      nodeIndexToRemove,
+    );
+
+    // 5. Copy node elements after the removal index (shifting left by 1)
+    List.copyRange(
+      newContent,
+      newDataLen + nodeLocalIndex,
+      content,
+      nodeIndexToRemove + 1,
+      oldDataLen + oldNodeLen,
+    );
+
+    // WARNING: This implementation is complex and likely incorrect without
+    // the proper calculation of `dataIndexToInsert` based on the original bitpos.
+    throw UnimplementedError(
+      "_replaceNodeWithData needs correct index math and bitpos context",
+    );
+    // return newContent;
   }
 
   // --- Public API Methods ---
