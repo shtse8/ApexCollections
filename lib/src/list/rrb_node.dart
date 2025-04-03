@@ -17,6 +17,10 @@ abstract class RrbNode<E> {
 
   /// Whether this node represents an internal branch (contains child nodes).
   bool get isBranch => height > 0;
+
+  /// Retrieves the element at the effective [index] within this subtree.
+  /// The [index] must be valid within the bounds of this node's [count].
+  E get(int index);
 }
 
 /// Represents an internal node (branch) in the RRB-Tree.
@@ -44,6 +48,37 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
   /// Indicates if this node requires a size table for relaxed radix search.
   bool get isRelaxed => sizeTable != null;
+
+  @override
+  E get(int index) {
+    assert(index >= 0 && index < count);
+
+    final shift = height * _kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+
+    if (isRelaxed) {
+      // Relaxed Radix Search
+      int slot = indexInNode;
+      final sizes = sizeTable!;
+      // Skip slots until we find the one containing the index
+      // Need to check against the *previous* slot's cumulative size
+      while (slot > 0 && sizes[slot - 1] > index) {
+        slot--; // Should not happen often if radix is close
+      }
+      while (sizes[slot] <= index) {
+        slot++; // Linear scan for the correct slot
+      }
+
+      final child = children[slot];
+      final indexInChild = (slot == 0) ? index : index - sizes[slot - 1];
+      return child.get(indexInChild);
+    } else {
+      // Strict Radix Search (fixed size children)
+      final child = children[indexInNode];
+      final indexInChild = index & ((1 << shift) - 1); // Mask out upper bits
+      return child.get(indexInChild);
+    }
+  }
 }
 
 /// Represents a leaf node in the RRB-Tree.
@@ -62,6 +97,12 @@ class RrbLeafNode<E> extends RrbNode<E> {
   RrbLeafNode(this.elements)
     : assert(elements.isNotEmpty),
       assert(elements.length <= _kBranchingFactor);
+
+  @override
+  E get(int index) {
+    assert(index >= 0 && index < count);
+    return elements[index];
+  }
 }
 
 // TODO: Implement factory constructors or static methods for creating nodes.

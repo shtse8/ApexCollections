@@ -6,7 +6,10 @@ const int _kBranchingFactor = 1 << _kBitPartitionSize; // 32
 
 /// Base class for CHAMP Trie nodes.
 abstract class ChampNode<K, V> {
-  // Potentially add common methods or properties later if needed.
+  /// Retrieves the value associated with [key] within this subtree,
+  /// returning `null` if the key is not found.
+  /// Requires the full [hash] of the key and the current [shift] level.
+  V? get(K key, int hash, int shift);
 }
 
 /// Represents a standard internal node in the CHAMP Trie.
@@ -33,8 +36,32 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   bool get isEmpty => arity == 0;
   bool get isNotEmpty => arity > 0;
 
-  // TODO: Implement methods for lookup, insertion, removal, iteration, equality etc.
-  // These will involve bit manipulation on dataMap/nodeMap and indexing into content.
+  @override
+  V? get(K key, int hash, int shift) {
+    final mask = 1 << ((hash >> shift) & (_kBranchingFactor - 1));
+
+    if ((dataMap & mask) != 0) {
+      // Potential data payload match
+      final index = Integer.bitCount(dataMap & (mask - 1));
+      // Assuming keys/values are stored alternatingly for maps
+      final currentKey = content[index * 2] as K;
+      if (key == currentKey) {
+        return content[index * 2 + 1] as V;
+      }
+      return null; // Key mismatch
+    }
+
+    if ((nodeMap & mask) != 0) {
+      // Potential match in sub-node
+      final index = Integer.bitCount(nodeMap & (mask - 1));
+      final nodeIndex = content.length - 1 - index; // Nodes stored from the end
+      final childNode = content[nodeIndex] as ChampNode<K, V>;
+      return childNode.get(key, hash, shift + _kBitPartitionSize);
+    }
+
+    // Key not found in this node
+    return null;
+  }
 }
 
 /// Represents a node containing entries that have the same full hash code
@@ -54,7 +81,16 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
 
   int get arity => entries.length;
 
-  // TODO: Implement methods for lookup, insertion, removal specific to collision nodes.
+  @override
+  V? get(K key, int hash, int shift) {
+    // In a collision node, we ignore hash/shift and just check the list
+    for (final entry in entries) {
+      if (key == entry.key) {
+        return entry.value;
+      }
+    }
+    return null; // Key not found in collision list
+  }
 }
 
 // Helper for bit counting (consider adding as extension or utility)
