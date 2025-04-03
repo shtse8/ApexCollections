@@ -1,29 +1,30 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~02:33 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~02:47 UTC+1)
 
--   Project initialized: `ApexCollections` directory created.
--   Initial Memory Bank structure established:
-    -   `projectbrief.md`
-    -   `productContext.md`
-    -   `systemPatterns.md`
-    -   `techContext.md`
-    -   `activeContext.md` (this file)
-    -   `progress.md` (to be created next)
--   High-level phased plan defined (see `projectbrief.md`).
+-   Project initialized, Memory Bank established, basic Dart package structure confirmed.
+-   Initial benchmark files (`list_benchmarks.dart`, `map_benchmarks.dart`) cleaned up and committed/pushed.
+-   Ready to define the detailed plan for Phase 1.
 
 ## Current Focus
 
--   Completing the initial setup of the Memory Bank.
--   Preparing to start **Phase 1: Research & Benchmarking**.
+-   **Planning Phase 1: Research & Benchmarking**
 
 ## Next Immediate Steps
 
-1.  Create the initial `progress.md` file.
-2.  Define the specific research tasks and benchmark scenarios for Phase 1.
-3.  Set up the basic Dart package structure within the `ApexCollections` directory (`pubspec.yaml`, `lib/`, `test/`, `benchmark/`).
+1.  **Define Phase 1 Plan:** Detail the specific research tasks, data structures, benchmark operations, collection sizes, and data patterns for Phase 1. Document this plan (potentially in a new `phase1-plan.md` or directly within this file/progress.md).
+2.  **Begin Research:** Start investigating the chosen candidate data structures (e.g., RRB-Trees, CHAMP Tries).
+3.  **Implement Baseline Benchmarks:** Ensure the existing benchmark files can be run and produce baseline results for native Dart and `fast_immutable_collections`.
 
-## Open Questions / Decisions
+## Phase 1 Planning Points (To Be Detailed)
 
--   Finalize the specific data structures to investigate in Phase 1 (e.g., RRB-Trees, CHAMP Tries).
--   Detail the exact benchmark operations, collection sizes, and data patterns to test.
+-   **Data Structures:**
+    -   List: Confirm focus on RRB-Trees or alternatives?
+    -   Map: Confirm focus on CHAMP Tries or alternatives (e.g., HAMT)?
+-   **Benchmark Operations:**
+    -   List: `add`, `addAll`, `removeAt`, `removeWhere`, `[]` (lookup), iteration, `sublist` (slicing), concatenation (`+`).
+    -   Map: `add`/`[]=` (insert/update), `addAll`, `remove`, `[]` (lookup), iteration (entries, keys, values), `putIfAbsent`, `update`.
+-   **Collection Sizes:** Define specific sizes (e.g., 10, 1,000, 100,000, 1,000,000 elements).
+-   **Data Patterns:** Define patterns (e.g., sequential integers, random integers, strings, objects with varying hash distributions).
+-   **Comparison Targets:** Native Dart collections, `fast_immutable_collections`.
+-   **Documentation:** Decide where to document the detailed Phase 1 plan.
