@@ -35,12 +35,17 @@ Initial research based on `clojure/core.rrb-vector/doc/rrb-tree-notes.md` and we
     -   *Status:* Links available. **Action:** Browse codebases for structural patterns and algorithm implementations after understanding the core concepts from papers.
 
 
-### Core Concepts (Initial Summary - 2025-04-03 ~02:53 UTC+1)
+### Core Concepts (Updated Summary - 2025-04-03 ~02:54 UTC+1)
 
--   **Foundation:** Extends standard persistent vectors (wide, fixed-branching-factor trees).
--   **Key Improvement:** Enables efficient **concatenation, insert-at, and splits** in **O(log N)** time.
--   **Preserved Performance:** Maintains fast **O(log N) indexing (lookup), updates, and iteration** speeds of standard vectors.
--   **"Relaxed" Invariant:** Uses less strict balancing/node fullness rules, allowing efficient structural sharing and modification for operations like concat/slice without full tree rewrites.
+-   **Foundation:** Extends standard persistent vectors (wide, fixed-branching-factor trees, typically power-of-2 like 32) by incorporating ideas from B-trees.
+-   **Key Improvement:** Enables efficient **concatenation, insert-at (arbitrary index), and splits** in **O(log N)** time, unlike standard vectors where these can be O(N).
+-   **Preserved Performance:** Maintains fast **O(log N) indexing (lookup), updates, and iteration** speeds comparable to standard vectors.
+-   **Hybrid Node Structure:** Utilizes both "strict" and "relaxed" nodes:
+    -   **Strict Nodes:** Aim for fixed power-of-2 size, packed left, partially filled only on the right edge (like standard vectors).
+    -   **Relaxed Nodes:** Allow more flexible child counts (potentially `m` to `2m-1` range) and child sub-tree sizes that don't strictly align with powers of 2. This flexibility is key for efficient structural changes.
+    -   **Rightmost Spine Relaxation:** Nodes on the far right edge have even less strict minimum size constraints.
+-   **Invariant:** Ensures overall tree balance (all leaves at same depth) while permitting the mix of strict/relaxed nodes. This allows efficient radix-based indexing (with potentially minor linear scans within relaxed nodes) alongside efficient O(log N) structural modifications (concat, insert, slice).
+-   **Focus Buffer:** Often employs a "focus" buffer (small array near the last modification point) to optimize localized updates/inserts, as opposed to just a "tail" buffer (always at the end).
 
 ### Initial Research Tasks:
 
