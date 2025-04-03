@@ -10,11 +10,14 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
   /// The number of key-value pairs in the map.
   final int _length;
-  // TODO: Consider caching hashCode
+
+  /// Cached hash code. Computed lazily.
+  int? _cachedHashCode;
 
   /// The canonical empty instance (internal). Use Never for type safety.
-  static const ApexMapImpl<Never, Never> _emptyInstance = ApexMapImpl._(
-    const champ.ChampEmptyNode(), // Use const constructor
+  // Changed from const to final static because ChampEmptyNode is no longer const.
+  static final ApexMapImpl<Never, Never> _emptyInstance = ApexMapImpl._(
+    champ.ChampEmptyNode(), // Cannot be const anymore
     0,
   );
 
@@ -22,8 +25,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   static ApexMapImpl<K, V> emptyInstance<K, V>() =>
       _emptyInstance as ApexMapImpl<K, V>; // Cast the const instance
 
-  /// Internal const constructor.
-  const ApexMapImpl._(this._root, this._length);
+  /// Internal constructor. Cannot be const due to mutable _cachedHashCode.
+  ApexMapImpl._(this._root, this._length) : _cachedHashCode = null;
 
   /// Factory constructor to create from a Map.
   factory ApexMapImpl.fromMap(Map<K, V> map) {
@@ -31,21 +34,29 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       // Return the canonical empty instance via the getter
       return emptyInstance<K, V>();
     }
-    // More efficient than the previous stub: build the node structure first.
-    // TODO: Implement truly efficient bulk loading (e.g., using transients).
-    champ.ChampNode<K, V> root =
-        const champ.ChampEmptyNode(); // Start with new empty node
+    // Use transient building for efficiency
+    final owner = champ.TransientOwner();
+    champ.ChampNode<K, V> root = champ.ChampEmptyNode<K, V>();
     int count = 0;
+
+    // Ensure the root starts mutable if needed (though empty is immutable)
+    // This pattern is more relevant when starting from an existing node.
+    // For building from empty, we just keep adding.
+
     map.forEach((key, value) {
-      // Use node's add directly
-      final result = root.add(key, value, key.hashCode, 0);
-      root = result.node;
+      // Pass owner to potentially mutate the root node structure
+      final result = root.add(key, value, key.hashCode, 0, owner);
+      root =
+          result
+              .node; // Update root reference (might be the same mutable node or a new one)
       if (result.didAdd) {
         count++;
       }
     });
-    // No need to cast root here as it starts typed correctly
-    return ApexMapImpl._(root, count);
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = root.freeze(owner);
+    return ApexMapImpl._(frozenRoot, count);
   }
 
   @override
@@ -116,10 +127,17 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     final champ.ChampAddResult<K, V> addResult;
     // Handle adding to the logical empty map explicitly
     if (_root.isEmptyNode) {
+      // DataNode creation doesn't need owner
+      final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, value);
+      addResult = (node: newNode, didAdd: true);
+    } else if (_root.isEmptyNode) {
+      // Explicitly handle adding to logical empty map
+      // Create the first data node directly
       final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, value);
       addResult = (node: newNode, didAdd: true);
     } else {
-      addResult = _root.add(key, value, key.hashCode, 0);
+      // Pass null owner for immutable operation on non-empty root
+      addResult = _root.add(key, value, key.hashCode, 0, null);
     }
 
     // If the node itself didn't change, return the original map.
@@ -140,29 +158,50 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       return ApexMapImpl<K, V>.fromMap(other); // Use efficient factory
     }
 
-    // TODO: Implement truly efficient bulk loading (e.g., using transients).
-    // Intermediate approach: build the node structure first.
-    champ.ChampNode<K, V> root = _root; // Start from current root
-    int count = _length; // Start from current length
-    bool changed = false;
+    // Use transient building for efficiency
+    final owner = champ.TransientOwner();
+    // Get a mutable version of the current root node
+    // Need to handle different root types for _ensureMutable
+    champ.ChampNode<K, V> mutableRoot;
+    if (_root is champ.ChampInternalNode<K, V>) {
+      mutableRoot = (_root as champ.ChampInternalNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else if (_root is champ.ChampCollisionNode<K, V>) {
+      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else {
+      // Empty and Data nodes are immutable, start transient op from them
+      mutableRoot = _root;
+    }
+
+    int additions = 0;
 
     other.forEach((key, value) {
-      final result = root.add(key, value, key.hashCode, 0);
-      if (!identical(root, result.node)) {
-        root = result.node;
-        changed = true;
+      // Pass owner to mutate the root node structure
+      final result = mutableRoot.add(key, value, key.hashCode, 0, owner);
+      // Update reference ONLY IF the node identity changes (e.g., ensureMutable created a copy, or add returned a new node type)
+      if (!identical(mutableRoot, result.node)) {
+        mutableRoot = result.node;
       }
       if (result.didAdd) {
-        count++;
-        changed = true; // Count change also means changed
+        additions++;
       }
     });
 
-    // Only create new instance if the root or count actually changed
-    if (!changed) {
+    // If no additions occurred and the root reference never changed (meaning _ensureMutable returned 'this' or root was immutable leaf),
+    // then nothing actually changed structurally.
+    if (additions == 0 && identical(mutableRoot, _root)) {
       return this;
     }
-    return ApexMapImpl._(root, count);
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = mutableRoot.freeze(owner);
+    final newCount = _length + additions;
+
+    // Return new instance with the frozen root and updated count
+    return ApexMapImpl._(frozenRoot, newCount);
   }
 
   @override
@@ -170,7 +209,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // TODO: Handle null keys if necessary
     if (isEmpty) return this; // Cannot remove from empty
 
-    final removeResult = _root.remove(key, key.hashCode, 0);
+    // Pass null owner for immutable operation
+    final removeResult = _root.remove(key, key.hashCode, 0, null);
 
     // If the node itself didn't change, return the original map.
     if (identical(removeResult.node, _root)) return this;
@@ -200,6 +240,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       // Handle empty case directly
       if (ifAbsent != null) {
         final newValue = ifAbsent();
+        // DataNode creation doesn't need owner
         final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, newValue);
         updateResult = (node: newNode, sizeChanged: true);
       } else {
@@ -209,12 +250,14 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       }
     } else {
       // Delegate to the root node's update method.
+      // Pass null owner for immutable operation
       updateResult = _root.update(
         key,
         key.hashCode,
         0, // Initial shift
         updateFn,
         ifAbsentFn: ifAbsent, // Pass ifAbsent callback
+        owner: null,
       );
     }
 
@@ -238,37 +281,67 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   ApexMap<K, V> updateAll(V Function(K key, V value) updateFn) {
     if (isEmpty) return this;
 
-    // TODO: Implement truly efficient bulk update using transients.
-    // Intermediate approach: Iterate entries and build new node structure.
-    champ.ChampNode<K, V> root = _root; // Start with current root
+    // Use transient building for efficiency
+    final owner = champ.TransientOwner();
+    // Get a mutable version of the current root node
+    champ.ChampNode<K, V> mutableRoot;
+    if (_root is champ.ChampInternalNode<K, V>) {
+      mutableRoot = (_root as champ.ChampInternalNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else if (_root is champ.ChampCollisionNode<K, V>) {
+      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else {
+      // Empty and Data nodes are immutable, start transient op from them
+      mutableRoot = _root;
+    }
+
     bool changed = false;
 
     // Iterate through existing entries and apply updateFn using node's update
+    // We iterate the original entries, but update the mutableRoot
     for (final entry in entries) {
-      // Uses efficient iterator
+      // Iterate original entries
       final key = entry.key;
       final currentValue = entry.value;
       final newValue = updateFn(key, currentValue);
 
-      // Only update the node structure if the value actually changed
+      // Only update if the value actually changed
       if (!identical(newValue, currentValue)) {
-        // Use node's update. Since key exists, ifAbsentFn is not needed.
-        // sizeChanged should be false here as we are only updating.
-        final updateResult = root.update(key, key.hashCode, 0, (_) => newValue);
-        // Check if the node actually changed (it might not if update resulted in same value object)
-        if (!identical(root, updateResult.node)) {
-          root = updateResult.node;
-          changed = true; // Mark that at least one value changed structurally
+        // Pass owner to mutate the root node structure
+        // Since key exists, ifAbsentFn is not needed, sizeChanged should be false.
+        final updateResult = mutableRoot.update(
+          key,
+          key.hashCode,
+          0,
+          (_) => newValue,
+          owner: owner,
+        );
+        // Update reference ONLY IF the node identity changes
+        if (!identical(mutableRoot, updateResult.node)) {
+          mutableRoot = updateResult.node;
         }
+        // Mark changed even if identity is same, as value was updated in place
+        changed = true;
       }
     }
 
-    // Only return new instance if something changed
+    // If nothing changed structurally or value-wise, return original
     if (!changed) {
-      return this;
+      // We might have mutated a copy, ensure we return 'this' if the root is identical
+      if (identical(mutableRoot, _root)) return this;
+      // If mutableRoot is not identical, it means ensureMutable created a copy,
+      // but no values changed. Freeze the copy and return it.
+      final frozenRoot = mutableRoot.freeze(owner);
+      return ApexMapImpl._(frozenRoot, _length);
     }
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = mutableRoot.freeze(owner);
     // Length doesn't change during updateAll
-    return ApexMapImpl._(root, _length);
+    return ApexMapImpl._(frozenRoot, _length);
   }
 
   @override
@@ -453,36 +526,28 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   ) {
     if (isEmpty) return ApexMap<K2, V2>.empty();
 
-    // TODO: Implement truly efficient mapping using transients/builders.
-    // Intermediate approach: Iterate entries and build new node structure directly.
-    champ.ChampNode<K2, V2> newRoot =
-        const champ.ChampEmptyNode(); // Assign const untyped empty node
+    // Use transient building for efficiency
+    final owner = champ.TransientOwner();
+    champ.ChampNode<K2, V2> mutableNewRoot = champ.ChampEmptyNode<K2, V2>();
     int newCount = 0;
-    bool changed = false; // Track if the structure or content changes
+    // No need for 'changed' flag when building from scratch
 
     for (final entry in entries) {
-      // Uses efficient iterator
+      // Iterate original entries
       final newEntry = convert(entry.key, entry.value);
       final K2 newKey = newEntry.key;
       final V2 newValue = newEntry.value;
       final int newKeyHash = newKey.hashCode;
 
-      // Try adding the new entry to the new root being built
-      final result = newRoot.add(newKey, newValue, newKeyHash, 0);
+      // Add the new entry to the mutableNewRoot, passing the owner
+      final result = mutableNewRoot.add(newKey, newValue, newKeyHash, 0, owner);
 
-      // Update root and count if necessary
-      if (!identical(newRoot, result.node)) {
-        newRoot = result.node;
-        changed = true; // Structure changed
-      }
+      // Update root reference (might be the same mutable node or a new one)
+      mutableNewRoot = result.node;
       if (result.didAdd) {
         newCount++;
-        // If didAdd is true, it implies a change even if the root reference is the same (e.g., first element)
-        changed = true;
       }
-      // Note: If result.didAdd is false (key collision), the value might still have changed.
-      // The current `add` implementation in champ_node handles overwriting.
-      // Relying on `!identical(newRoot, result.node)` captures structural changes from overwrites too.
+      // Overwrites are handled correctly by add
     }
 
     // If the resulting map is empty, return the canonical empty instance.
@@ -508,55 +573,77 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     //   if (!valuesChanged) return this as ApexMap<K2, V2>;
     // }
     // For simplicity and guaranteed correctness, we create the new instance if changed.
-    if (!changed) {
-      // If the node structure never changed reference and count is same,
-      // and types are compatible, we might be able to return this.
-      // However, the convert function could change values without changing structure/count.
-      // Safest is to return the new map unless we do a deeper value check.
-      // Let's return the new map for now.
-      // Consider adding the deep check later if performance demands it.
-    }
+    // Freeze the final potentially mutable root node
+    final frozenNewRoot = mutableNewRoot.freeze(owner);
 
     // Return the newly built map
-    return ApexMapImpl<K2, V2>._(newRoot, newCount);
+    return ApexMapImpl<K2, V2>._(frozenNewRoot, newCount);
   }
 
   @override
   ApexMap<K, V> removeWhere(bool Function(K key, V value) predicate) {
     if (isEmpty) return this;
 
-    // TODO: Implement truly efficient bulk remove using transients.
-    // Intermediate approach: Iterate entries and build new node structure by keeping entries.
-    champ.ChampNode<K, V> root =
-        const champ.ChampEmptyNode(); // Start with empty
-    int count = 0;
-    bool changed = false; // Track if any elements were actually removed
+    // Use transient building for efficiency
+    final owner = champ.TransientOwner();
+    // Get a mutable version of the current root node
+    champ.ChampNode<K, V> mutableRoot;
+    if (_root is champ.ChampInternalNode<K, V>) {
+      mutableRoot = (_root as champ.ChampInternalNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else if (_root is champ.ChampCollisionNode<K, V>) {
+      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
+        owner,
+      );
+    } else {
+      // Empty and Data nodes are immutable, start transient op from them
+      mutableRoot = _root;
+    }
 
+    int removalCount = 0;
+    // Need to collect keys to remove first, as modifying during iteration is problematic
+    final keysToRemove = <K>[];
     for (final entry in entries) {
-      // Uses efficient iterator
-      if (!predicate(entry.key, entry.value)) {
-        // Keep this entry - add it to the new structure
-        final result = root.add(entry.key, entry.value, entry.key.hashCode, 0);
-        root = result.node;
-        if (result.didAdd) {
-          // Should always be true when building from empty
-          count++;
-        }
-      } else {
-        changed = true; // Mark that at least one element was removed
+      // Iterate original entries
+      if (predicate(entry.key, entry.value)) {
+        keysToRemove.add(entry.key);
       }
     }
 
-    // If nothing was removed, return the original instance
-    if (!changed) {
-      return this;
+    if (keysToRemove.isEmpty) {
+      // If ensureMutable created a copy, freeze it before returning
+      if (!identical(mutableRoot, _root)) {
+        final frozenRoot = mutableRoot.freeze(owner);
+        return ApexMapImpl._(frozenRoot, _length); // Length unchanged
+      }
+      return this; // No changes needed
     }
+
+    // Perform removals on the mutable root
+    for (final key in keysToRemove) {
+      final removeResult = mutableRoot.remove(key, key.hashCode, 0, owner);
+      // Update reference ONLY IF the node identity changes
+      if (!identical(mutableRoot, removeResult.node)) {
+        mutableRoot = removeResult.node;
+      }
+      if (removeResult.didRemove) {
+        removalCount++;
+      }
+    }
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = mutableRoot.freeze(owner);
+
     // If all elements were removed, return a new empty instance via factory
-    if (count == 0) {
+    final newCount = _length - removalCount;
+    if (newCount == 0) {
       return ApexMap<K, V>.empty();
     }
-    // No need to cast root as it starts typed correctly if built from empty
-    return ApexMapImpl._(root, count);
+
+    // Return new instance with the frozen root and updated count
+    return ApexMapImpl._(frozenRoot, newCount);
+    // Removed the old iterative logic replaced above
   }
 
   // --- Equality and HashCode ---
@@ -591,9 +678,16 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
   @override
   int get hashCode {
+    // Return cached hash code if available
+    if (_cachedHashCode != null) return _cachedHashCode!;
+
+    // Compute hash code if not cached
     // Based on the standard Jenkins hash combination used in MapEquality/Objects.hash
     // Needs to be order-independent, so XOR hash codes of entries.
-    if (isEmpty) return 0; // Consistent hash for empty
+    if (isEmpty) {
+      _cachedHashCode = 0; // Consistent hash for empty
+      return _cachedHashCode!;
+    }
 
     int result = 0;
     for (final entry in entries) {
@@ -606,7 +700,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Apply final avalanche step (similar to Objects.hash)
     result = 0x1fffffff & (result + ((0x03ffffff & result) << 3));
     result = result ^ (result >> 11);
-    return 0x1fffffff & (result + ((0x00003fff & result) << 15));
+    result = 0x1fffffff & (result + ((0x00003fff & result) << 15));
+
+    // Cache and return the computed hash code
+    _cachedHashCode = result;
+    return _cachedHashCode!;
   }
 } // <<< Closing brace for ApexMapImpl
 

@@ -437,6 +437,29 @@ void main() {
       expect(map1a.hashCode, isNot(equals(ApexMap.empty().hashCode)));
     });
 
+    test('hashCode is cached', () {
+      final map = ApexMap<String, int>.empty().add('a', 1).add('b', 2);
+      final hash1 = map.hashCode;
+      final hash2 = map.hashCode;
+
+      // While we can't directly check if it was computed only once without
+      // instrumentation, we expect the results to be identical if cached properly.
+      // Using equals() is sufficient for correctness.
+      expect(hash1, equals(hash2));
+
+      // Create a modified map
+      final mapModified = map.add('c', 3);
+      final hash3 = mapModified.hashCode;
+
+      // Hash code should likely differ for a different map
+      // (Collision is possible but unlikely here)
+      expect(hash1, isNot(equals(hash3)));
+
+      // Check caching on the modified map too
+      final hash4 = mapModified.hashCode;
+      expect(hash3, equals(hash4));
+    });
+
     test('containsValue', () {
       final map = ApexMap<String, int?>.empty()
           .add('a', 1)
@@ -669,6 +692,15 @@ void main() {
         expect(emptyMap.isEmpty, isTrue);
         expect(identical(emptyMap, ApexMap<String, int>.empty()), isTrue);
       });
+
+      // From larger map (exercises transient building)
+      final largeSource = {for (var i = 0; i < 500; i++) 'key$i': i};
+      final largeMap = ApexMap<String, int>.from(largeSource);
+      expect(largeMap.length, 500);
+      expect(largeMap['key0'], 0);
+      expect(largeMap['key250'], 250);
+      expect(largeMap['key499'], 499);
+      expect(largeMap.containsKey('key500'), isFalse);
 
       test('clear', () {
         final map1 = ApexMap<String, int>.empty().add('a', 1).add('b', 2);

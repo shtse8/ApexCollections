@@ -26,8 +26,9 @@ class ApexListImpl<E> extends ApexList<E> {
     // empty node case, as operations will typically check isEmptyNode first
     // or create new nodes with the correct type E.
     // The final `as ApexListImpl<E>` is needed because the Expando stores ApexListImpl<dynamic>.
+    // Use the new static empty leaf node instance.
     return (_emptyCache[E] ??= ApexListImpl<E>._(
-          rrb.RrbEmptyNode.instance
+          rrb.RrbLeafNode.emptyInstance
               as rrb.RrbNode<E>, // Cast the shared Never node
           0,
         ))
@@ -191,7 +192,8 @@ class ApexListImpl<E> extends ApexList<E> {
   ApexList<E> add(E value) {
     // TODO: Handle tail/focus optimization for amortized O(1) append.
     final rrb.RrbNode<E> newRoot;
-    if (_root.isEmptyNode) {
+    // Check length instead of isEmptyNode
+    if (isEmpty) {
       // Special case: Adding to empty creates the first leaf directly with type E.
       newRoot = rrb.RrbLeafNode<E>([value]);
     } else {
@@ -233,7 +235,8 @@ class ApexListImpl<E> extends ApexList<E> {
     RangeError.checkValidIndex(index, this, 'index', _length + 1);
 
     final rrb.RrbNode<E> newRoot;
-    if (_root.isEmptyNode) {
+    // Check length instead of isEmptyNode
+    if (isEmpty) {
       // Special case: Inserting into empty list (index must be 0)
       if (index != 0) {
         // This should be caught by checkValidIndex, but double-check.
@@ -338,7 +341,8 @@ class ApexListImpl<E> extends ApexList<E> {
 
     final newRoot = _root.removeAt(index);
 
-    if (newRoot == null || newRoot.isEmptyNode) {
+    // RrbNode.removeAt now returns null if the node becomes empty.
+    if (newRoot == null) {
       // The root node became empty
       return emptyInstance<E>(); // Use the getter for the typed empty instance
     } else if (identical(newRoot, _root)) {
@@ -364,30 +368,78 @@ class ApexListImpl<E> extends ApexList<E> {
   ApexList<E> removeWhere(bool Function(E element) test) {
     if (isEmpty) return this;
 
-    // TODO: Implement truly efficient bulk remove using transients/builders.
-    // Intermediate approach: Iterate and build new tree structure directly.
-    ApexListImpl<E> newList = emptyInstance<E>(); // Start with an empty list
-    int newLength = 0;
-    bool changed = false;
+    // Use transient building for efficiency
+    final owner = rrb.TransientOwner();
+    // Get a mutable version of the current root node
+    rrb.RrbNode<E> mutableRoot;
+    if (_root is rrb.RrbInternalNode<E>) {
+      mutableRoot = (_root as rrb.RrbInternalNode<E>).ensureMutable(owner);
+    } else if (_root is rrb.RrbLeafNode<E>) {
+      mutableRoot = (_root as rrb.RrbLeafNode<E>).ensureMutable(owner);
+    } else {
+      // Must be the empty leaf node
+      // Empty node is immutable, noop
+      return this;
+    }
 
-    // Use the efficient iterator
-    for (final element in this) {
+    int removalCount = 0;
+    // Iterate backwards to avoid index shifting issues during removal
+    for (int i = _length - 1; i >= 0; i--) {
+      // Need to get element before potential removal modifies structure
+      // This still uses the non-transient get operator, which is acceptable here.
+      final element = this[i];
       if (test(element)) {
-        changed = true; // Mark that at least one element needs removal
-      } else {
-        // Add element to the new list being built
-        // Use the internal constructor and add method for potential efficiency
-        // (though add currently delegates to node.add)
-        newList = ApexListImpl._(newList._root.add(element), newLength + 1);
-        newLength++;
+        // Pass owner to mutate the root node structure
+        final removeResult = mutableRoot.removeAt(i, owner);
+
+        // Update root reference if it changed (e.g., collapsed or ensureMutable copied)
+        // If removeResult is null, the tree became empty.
+        // If removeResult is null, the tree became empty. Use the canonical empty leaf.
+        mutableRoot =
+            removeResult ?? rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>;
+
+        removalCount++;
+
+        // If the tree becomes empty during iteration, stop early.
+        // Check if the root became the canonical empty node.
+        if (identical(
+          mutableRoot,
+          rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>,
+        ))
+          break;
       }
     }
 
-    if (!changed) {
-      return this; // No elements matched the test, return original list
+    // If no removals occurred, handle potential copy from ensureMutable
+    if (removalCount == 0) {
+      if (!identical(mutableRoot, _root)) {
+        // ensureMutable created a copy, but nothing was removed. Freeze and return it.
+        final frozenRoot = mutableRoot.freeze(owner);
+        return ApexListImpl._(frozenRoot, _length);
+      }
+      return this; // No changes needed
     }
-    // newList already holds the result, no need to check isEmpty separately
-    return newList;
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = mutableRoot.freeze(owner);
+    final newLength = _length - removalCount;
+
+    // If all elements were removed, return empty instance
+    if (newLength == 0) {
+      // Ensure frozenRoot is indeed the empty node after freezing
+      // Check if frozenRoot is the canonical empty node or just has count 0.
+      assert(
+        identical(
+              frozenRoot,
+              rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>,
+            ) ||
+            frozenRoot.count == 0,
+      );
+      return emptyInstance<E>();
+    }
+
+    // Return new instance with the frozen root and updated count
+    return ApexListImpl._(frozenRoot, newLength);
   }
 
   @override
