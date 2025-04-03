@@ -21,6 +21,16 @@ abstract class RrbNode<E> {
   /// Retrieves the element at the effective [index] within this subtree.
   /// The [index] must be valid within the bounds of this node's [count].
   E get(int index);
+
+  /// Returns a new node structure representing the tree after updating the
+  /// element at the effective [index] within this subtree with the new [value].
+  /// The [index] must be valid within the bounds of this node's [count].
+  RrbNode<E> update(int index, E value);
+
+  /// Returns a new node structure representing the tree after appending [value]
+  /// to the end of the subtree represented by this node.
+  /// This might involve node splits and increasing tree height.
+  RrbNode<E> add(E value);
 }
 
 /// Represents an internal node (branch) in the RRB-Tree.
@@ -79,6 +89,120 @@ class RrbInternalNode<E> extends RrbNode<E> {
       return child.get(indexInChild);
     }
   }
+
+  @override
+  RrbNode<E> update(int index, E value) {
+    assert(index >= 0 && index < count);
+
+    final shift = height * _kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+    int slot = indexInNode; // Default for strict case
+    int indexInChild = index & ((1 << shift) - 1); // Default for strict case
+
+    if (isRelaxed) {
+      // Find correct slot and index for relaxed node
+      final sizes = sizeTable!;
+      while (slot > 0 && sizes[slot - 1] > index) {
+        slot--;
+      }
+      while (sizes[slot] <= index) {
+        slot++;
+      }
+      indexInChild = (slot == 0) ? index : index - sizes[slot - 1];
+    }
+
+    final oldChild = children[slot];
+    final newChild = oldChild.update(indexInChild, value);
+
+    // If child didn't change (e.g., value was identical), return original node
+    if (identical(oldChild, newChild)) {
+      return this;
+    }
+
+    // Create a new internal node with the updated child
+    final newChildren = List<RrbNode<E>>.of(children);
+    newChildren[slot] = newChild;
+
+    // Size table doesn't change on update, so reuse if it exists
+    return RrbInternalNode<E>(height, count, newChildren, sizeTable);
+  }
+
+  @override
+  RrbNode<E> add(E value) {
+    // Recursively add to the last child.
+    final lastChildIndex = children.length - 1;
+    final lastChild = children[lastChildIndex];
+
+    // Calculate count of elements *before* the last child
+    int countBeforeLast;
+    if (isRelaxed) {
+      countBeforeLast =
+          (lastChildIndex == 0) ? 0 : sizeTable![lastChildIndex - 1];
+    } else {
+      // Strict node: size is predictable
+      countBeforeLast =
+          lastChildIndex * (1 << (height * _kLog2BranchingFactor));
+    }
+
+    final newLastChild = lastChild.add(value);
+
+    // If last child didn't change structure (e.g., internal update), just update pointer
+    if (identical(lastChild, newLastChild)) {
+      return this;
+    }
+
+    final newChildren = List<RrbNode<E>>.of(children);
+    List<int>? newSizeTable =
+        sizeTable != null ? List<int>.of(sizeTable!) : null;
+
+    if (newLastChild.height == height) {
+      // Child split, returned a new internal node of same height containing original + new node
+      // This means the current node needs to accommodate an extra child node.
+      assert(newLastChild is RrbInternalNode<E>);
+      final splitChild = newLastChild as RrbInternalNode<E>;
+      assert(splitChild.children.length == 2); // Expecting split into two
+
+      newChildren[lastChildIndex] =
+          splitChild.children[0]; // Replace original last child
+      final nodeToAdd = splitChild.children[1]; // Node to potentially add
+
+      if (children.length < _kBranchingFactor) {
+        // Current node has space
+        newChildren.add(nodeToAdd);
+        if (newSizeTable != null) {
+          // Update size table: last entry is previous total + new node's count
+          newSizeTable[lastChildIndex] =
+              countBeforeLast + newChildren[lastChildIndex].count;
+          newSizeTable.add(count + 1); // New total count
+        }
+        return RrbInternalNode<E>(height, count + 1, newChildren, newSizeTable);
+      } else {
+        // Current node is full, need to create a new parent
+        final newNodeList = [
+          nodeToAdd,
+        ]; // Node containing the single overflow child
+        final newParentInternal = RrbInternalNode<E>(
+          height,
+          nodeToAdd.count,
+          newNodeList,
+          null,
+        ); // Strict node initially
+        // New root node, height increases
+        return RrbInternalNode<E>(height + 1, count + 1, [
+          this,
+          newParentInternal,
+        ], null); // Strict node initially
+      }
+    } else {
+      // Child did not split (height is child height = height - 1)
+      newChildren[lastChildIndex] = newLastChild;
+      if (newSizeTable != null) {
+        newSizeTable[lastChildIndex] =
+            count + 1; // Update cumulative count for the last slot
+      }
+      return RrbInternalNode<E>(height, count + 1, newChildren, newSizeTable);
+    }
+  }
 }
 
 /// Represents a leaf node in the RRB-Tree.
@@ -102,6 +226,36 @@ class RrbLeafNode<E> extends RrbNode<E> {
   E get(int index) {
     assert(index >= 0 && index < count);
     return elements[index];
+  }
+
+  @override
+  RrbNode<E> update(int index, E value) {
+    assert(index >= 0 && index < count);
+
+    // If the new value is identical to the old one, return the same node
+    if (identical(elements[index], value) || elements[index] == value) {
+      return this;
+    }
+
+    // Create a new leaf node with the updated element
+    final newElements = List<E>.of(elements);
+    newElements[index] = value;
+    return RrbLeafNode<E>(newElements);
+  }
+
+  @override
+  RrbNode<E> add(E value) {
+    if (elements.length < _kBranchingFactor) {
+      // Leaf has space, create new leaf with appended element
+      final newElements = List<E>.of(elements)..add(value);
+      return RrbLeafNode<E>(newElements);
+    } else {
+      // Leaf is full, create a new parent node (height 1)
+      final newLeaf = RrbLeafNode<E>([value]);
+      // New parent contains the original full leaf and the new single-element leaf
+      // Parent is initially strict as children are max size or single
+      return RrbInternalNode<E>(1, count + 1, [this, newLeaf], null);
+    }
   }
 }
 
