@@ -10,6 +10,12 @@ abstract class ChampNode<K, V> {
   /// returning `null` if the key is not found.
   /// Requires the full [hash] of the key and the current [shift] level.
   V? get(K key, int hash, int shift);
+
+  /// Returns a new node structure representing the trie after adding or
+  /// updating the entry with [key], [value], and its [hash].
+  /// [shift] indicates the current level in the trie.
+  /// Returns `this` if the key/value pair was already present.
+  ChampNode<K, V> add(K key, V value, int hash, int shift);
 }
 
 /// Represents a standard internal node in the CHAMP Trie.
@@ -62,6 +68,225 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     // Key not found in this node
     return null;
   }
+
+  @override
+  ChampNode<K, V> add(K key, V value, int hash, int shift) {
+    final mask = 1 << ((hash >> shift) & (_kBranchingFactor - 1));
+    final bitpos = mask; // Use mask as bitpos for clarity
+
+    if ((dataMap & bitpos) != 0) {
+      // Slot contains a data payload
+      final dataIndex = Integer.bitCount(dataMap & (bitpos - 1));
+      final payloadIndex = dataIndex * 2;
+      final currentKey = content[payloadIndex] as K;
+
+      if (key == currentKey) {
+        // Key match: Update value if different
+        final currentValue = content[payloadIndex + 1] as V;
+        if (identical(currentValue, value) || currentValue == value) {
+          return this; // Value is the same, no change
+        }
+        // Create new node with updated value
+        final newContent = List<Object?>.of(content);
+        newContent[payloadIndex + 1] = value;
+        return ChampInternalNode<K, V>(dataMap, nodeMap, newContent);
+      } else {
+        // Key mismatch: Collision or path expansion needed
+        final currentVal = content[payloadIndex + 1] as V;
+        final currentEntry = MapEntry(currentKey, currentVal);
+        final newEntry = MapEntry(key, value);
+
+        // Need hash of existing key to proceed
+        final currentHash = currentKey.hashCode; // Assuming standard hashCode
+
+        if (currentHash == hash) {
+          // Full hash collision: Create CollisionNode
+          final collisionNode = ChampCollisionNode<K, V>(hash, [
+            currentEntry,
+            newEntry,
+          ]);
+          final newContent = _replaceDataWithNode(dataIndex, collisionNode);
+          return ChampInternalNode<K, V>(
+            dataMap ^ bitpos,
+            nodeMap | bitpos,
+            newContent,
+          );
+        } else {
+          // Hashes differ: Expand path
+          final subNode = _createSubNode(
+            currentEntry,
+            currentHash,
+            newEntry,
+            hash,
+            shift + _kBitPartitionSize,
+          );
+          final newContent = _replaceDataWithNode(dataIndex, subNode);
+          return ChampInternalNode<K, V>(
+            dataMap ^ bitpos,
+            nodeMap | bitpos,
+            newContent,
+          );
+        }
+      }
+    } else if ((nodeMap & bitpos) != 0) {
+      // Slot contains a sub-node
+      final nodeLocalIndex = Integer.bitCount(nodeMap & (bitpos - 1));
+      final nodeIndex = content.length - 1 - nodeLocalIndex;
+      final subNode = content[nodeIndex] as ChampNode<K, V>;
+      final newSubNode = subNode.add(
+        key,
+        value,
+        hash,
+        shift + _kBitPartitionSize,
+      );
+
+      if (identical(subNode, newSubNode)) {
+        return this; // Sub-node didn't change
+      }
+      // Create new node with updated sub-node
+      final newContent = List<Object?>.of(content);
+      newContent[nodeIndex] = newSubNode;
+      return ChampInternalNode<K, V>(dataMap, nodeMap, newContent);
+    } else {
+      // Slot is empty: Insert new data payload
+      final dataIndex = Integer.bitCount(dataMap & (bitpos - 1));
+      final newContent = _insertData(dataIndex, key, value);
+      return ChampInternalNode<K, V>(dataMap | bitpos, nodeMap, newContent);
+    }
+  }
+
+  // --- Helper methods for node modification (Internal) ---
+
+  /// Creates a new content array with data at [dataIndex] replaced by [newNode].
+  List<Object?> _replaceDataWithNode(int dataIndex, ChampNode<K, V> newNode) {
+    final dataPayloadIndex = dataIndex * 2;
+    final nodeLocalIndex = Integer.bitCount(
+      nodeMap & ((1 << dataIndex) - 1),
+    ); // Approximation, needs refinement based on actual bitpos
+    final newNodeIndex =
+        (content.length - nodeArity) -
+        1 -
+        nodeLocalIndex; // Calculate insertion point for node
+
+    final newContent = List<Object?>.filled(
+      content.length - 2 + 1,
+      null,
+    ); // -2 for data, +1 for node
+
+    // Copy data before the replaced slot
+    List.copyRange(newContent, 0, content, 0, dataPayloadIndex);
+    // Copy data after the replaced slot
+    List.copyRange(
+      newContent,
+      dataPayloadIndex,
+      content,
+      dataPayloadIndex + 2,
+      dataArity * 2,
+    );
+    // Copy nodes before the insertion point
+    List.copyRange(
+      newContent,
+      dataArity * 2,
+      content,
+      dataArity * 2,
+      newNodeIndex + dataArity * 2,
+    ); // Adjust source index
+    // Insert the new node
+    newContent[newNodeIndex + dataArity * 2] = newNode;
+    // Copy nodes after the insertion point
+    List.copyRange(
+      newContent,
+      newNodeIndex + dataArity * 2 + 1,
+      content,
+      newNodeIndex + dataArity * 2 + 1,
+      content.length,
+    ); // Adjust indices
+
+    // This helper needs careful index calculation based on actual bit positions
+    // and the dual-growth strategy. Placeholder logic shown.
+    throw UnimplementedError("_replaceDataWithNode needs correct index math");
+  }
+
+  /// Creates a new content array with [key]/[value] inserted at [dataIndex].
+  List<Object?> _insertData(int dataIndex, K key, V value) {
+    final dataPayloadIndex = dataIndex * 2;
+    final newContent = List<Object?>.filled(content.length + 2, null);
+
+    // Copy elements before insertion point
+    List.copyRange(newContent, 0, content, 0, dataPayloadIndex);
+    // Insert new key/value
+    newContent[dataPayloadIndex] = key;
+    newContent[dataPayloadIndex + 1] = value;
+    // Copy elements after insertion point
+    List.copyRange(
+      newContent,
+      dataPayloadIndex + 2,
+      content,
+      dataPayloadIndex,
+      dataArity * 2,
+    );
+    // Copy all existing nodes
+    List.copyRange(
+      newContent,
+      dataArity * 2 + 2,
+      content,
+      dataArity * 2,
+      content.length,
+    );
+
+    // This helper needs careful index calculation based on actual bit positions
+    // and the dual-growth strategy. Placeholder logic shown.
+    throw UnimplementedError("_insertData needs correct index math");
+  }
+
+  /// Creates a sub-node when two entries collide at the current level.
+  ChampNode<K, V> _createSubNode(
+    MapEntry<K, V> entry1,
+    int hash1,
+    MapEntry<K, V> entry2,
+    int hash2,
+    int shift,
+  ) {
+    if (shift >= _kHashBits) {
+      // Max depth reached, create collision node
+      return ChampCollisionNode<K, V>(hash1, [entry1, entry2]);
+    }
+
+    final mask1 = 1 << ((hash1 >> shift) & (_kBranchingFactor - 1));
+    final mask2 = 1 << ((hash2 >> shift) & (_kBranchingFactor - 1));
+
+    if (mask1 == mask2) {
+      // Still colliding at this level, recurse
+      final subNode = _createSubNode(
+        entry1,
+        hash1,
+        entry2,
+        hash2,
+        shift + _kBitPartitionSize,
+      );
+      return ChampInternalNode<K, V>(0, mask1, [
+        subNode,
+      ]); // Node map has the bit set
+    } else {
+      // Can differentiate at this level
+      // Ensure order for consistent structure if needed (e.g., based on mask value)
+      if (mask1 < mask2) {
+        return ChampInternalNode<K, V>(mask1 | mask2, 0, [
+          entry1.key,
+          entry1.value,
+          entry2.key,
+          entry2.value,
+        ]);
+      } else {
+        return ChampInternalNode<K, V>(mask1 | mask2, 0, [
+          entry2.key,
+          entry2.value,
+          entry1.key,
+          entry1.value,
+        ]);
+      }
+    }
+  }
 }
 
 /// Represents a node containing entries that have the same full hash code
@@ -90,6 +315,38 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       }
     }
     return null; // Key not found in collision list
+  }
+
+  @override
+  ChampNode<K, V> add(K key, V value, int hash, int shift) {
+    // Check if key already exists
+    int existingIndex = -1;
+    for (int i = 0; i < entries.length; i++) {
+      if (key == entries[i].key) {
+        existingIndex = i;
+        break;
+      }
+    }
+
+    if (existingIndex != -1) {
+      // Key exists, update value if different
+      final currentEntry = entries[existingIndex];
+      if (identical(currentEntry.value, value) || currentEntry.value == value) {
+        return this; // Value is the same
+      }
+      final newEntries = List<MapEntry<K, V>>.of(entries);
+      newEntries[existingIndex] = MapEntry(key, value);
+      return ChampCollisionNode<K, V>(hash, newEntries);
+    } else {
+      // Key doesn't exist, add new entry
+      final newEntries = List<MapEntry<K, V>>.of(entries)
+        ..add(MapEntry(key, value));
+      // If only one entry remains after potential prior deletions,
+      // it should ideally be inlined back into a parent node,
+      // but that logic belongs in the InternalNode's deletion handling.
+      // Here, we just return a new collision node with the added entry.
+      return ChampCollisionNode<K, V>(hash, newEntries);
+    }
   }
 }
 
