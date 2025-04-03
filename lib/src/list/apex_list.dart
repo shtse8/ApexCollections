@@ -10,6 +10,19 @@ class ApexListImpl<E> extends ApexList<E> {
   /// Internal constructor. Use factories like ApexList.empty() or ApexList.from().
   const ApexListImpl._(this._root, this._length);
 
+  /// Factory constructor to create from an Iterable.
+  factory ApexListImpl.fromIterable(Iterable<E> elements) {
+    if (elements.isEmpty) {
+      // How to return the const empty instance? Need access to ApexList.empty() or a static const field.
+      // For now, throw unimplemented, requires linking API and Impl.
+      throw UnimplementedError(
+        'Cannot return empty list from impl factory yet',
+      );
+    }
+    // TODO: Actual implementation using builder/nodes
+    throw UnimplementedError('ApexListImpl.fromIterable');
+  }
+
   // --- Core Properties ---
 
   @override

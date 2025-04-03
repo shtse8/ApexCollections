@@ -1,5 +1,6 @@
 import 'package:collection/collection.dart'; // For equality
 import 'package:meta/meta.dart';
+import 'apex_map.dart'; // Import the concrete implementation
 
 /// Abstract definition for an immutable, persistent map based on CHAMP Tries.
 ///
@@ -19,8 +20,8 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// Creates an ApexMap from an existing map.
   factory ApexMap.from(Map<K, V> map) {
     // TODO: Implementation using a transient builder for efficiency
-    if (map.isEmpty) return ApexMap.empty();
-    throw UnimplementedError('ApexMap.from');
+    // Delegate to implementation factory
+    return ApexMapImpl.fromMap(map);
   }
 
   /// Creates an ApexMap from an iterable of map entries.

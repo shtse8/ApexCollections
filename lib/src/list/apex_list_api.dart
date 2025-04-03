@@ -1,5 +1,7 @@
 import 'package:collection/collection.dart'; // For IterableExtension methods if needed later
 import 'package:meta/meta.dart';
+import 'apex_list.dart'; // Import the concrete implementation
+// import 'apex_list.dart'; // Assuming implementation is in apex_list.dart
 
 /// Abstract definition for an immutable, persistent list based on RRB-Trees.
 ///
@@ -20,7 +22,7 @@ abstract class ApexList<E> implements Iterable<E> {
   factory ApexList.from(Iterable<E> elements) {
     // TODO: Implementation using a transient builder for efficiency
     if (elements.isEmpty) return ApexList.empty();
-    throw UnimplementedError('ApexList.from');
+    return ApexListImpl<E>.fromIterable(elements); // Delegate to implementation
   }
 
   /// Creates an ApexList with the given elements.
@@ -174,6 +176,7 @@ class _EmptyApexList<E> extends ApexList<E> {
   @override
   ApexList<E> add(E value) {
     // TODO: Return a concrete ApexList implementation with one element
+    // Example: return ApexListImpl<E>.fromIterable([value]);
     throw UnimplementedError('Add on empty list should create a new list');
   }
 
