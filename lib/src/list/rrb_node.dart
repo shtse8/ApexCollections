@@ -248,116 +248,125 @@ class RrbInternalNode<E> extends RrbNode<E> {
   // Updated removeAt to use transient logic
   @override
   RrbNode<E>? removeAt(int index, [TransientOwner? owner]) {
-    // Added owner
     assert(index >= 0 && index < count);
 
-    final mutableNode = ensureMutable(owner);
-    // Use mutableNode fields from now on
-
-    final shift = mutableNode.height * kLog2BranchingFactor;
+    // --- Find target child and index within child ---
+    final shift = height * kLog2BranchingFactor;
     final indexInNode = (index >> shift) & (kBranchingFactor - 1);
-    int slot = indexInNode; // Default for strict case
-    int indexInChild = index & ((1 << shift) - 1); // Default for strict case
+    int slot = indexInNode;
+    int indexInChild = index & ((1 << shift) - 1);
 
-    if (mutableNode.isRelaxed) {
-      // Find correct slot and index for relaxed node
-      final sizes = mutableNode.sizeTable!;
-      // Find the first slot 's' such that index < sizes[s].
-      // We know index < count (total elements), and sizes[last] == count.
-      // Therefore, this loop is guaranteed to find a slot.
+    if (isRelaxed) {
+      final sizes = sizeTable!;
       slot = 0;
       while (sizes[slot] <= index) {
         slot++;
       }
-      // Now 'slot' is the index of the child node containing the element at 'index'.
-      // Calculate the index relative to the start of that child node.
       indexInChild = (slot == 0) ? index : index - sizes[slot - 1];
     }
 
-    final oldChild = mutableNode.children[slot];
-    // Pass owner down to recursive call
-    final newChild = oldChild.removeAt(indexInChild, owner);
+    // --- Recursively remove from child ---
+    final oldChild = children[slot];
+    final newChild = oldChild.removeAt(indexInChild, owner); // Pass owner down
 
-    // If child didn't change, return potentially mutated node
+    // --- Handle result ---
     if (identical(oldChild, newChild)) {
-      return mutableNode;
+      // Child didn't change, return this node (potentially mutable if owner matched)
+      return this;
     }
 
-    // Child changed, update mutableNode in place
-    // Use mutableNode's lists directly
-    final newCount = mutableNode.count - 1; // Use mutableNode.count
+    final newCount = this.count - 1;
 
-    if (newChild == null) {
-      // Child became empty, remove it from mutable node's list
-      mutableNode.children.removeAt(slot);
-      if (mutableNode.children.isEmpty) {
-        return null; // This node also becomes empty
-      }
-      if (mutableNode.sizeTable != null) {
-        // Need to recalculate size table after removal (mutate in place)
-        final removedChildCount =
-            oldChild.count; // Get count before modifying table
-        mutableNode.sizeTable!.removeAt(slot);
-        for (int i = slot; i < mutableNode.sizeTable!.length; i++) {
-          mutableNode.sizeTable![i] -= removedChildCount;
+    if (owner != null) {
+      // --- Transient Path ---
+      final mutableNode = ensureMutable(owner); // Ensure this node is mutable
+
+      if (newChild == null) {
+        // Child became empty, remove it from mutable lists
+        final removedChildCount = oldChild.count;
+        mutableNode.children.removeAt(slot); // Modify mutable list
+        if (mutableNode.children.isEmpty) return null; // Node becomes empty
+
+        if (mutableNode.sizeTable != null) {
+          mutableNode.sizeTable!.removeAt(slot); // Modify mutable list
+          for (int i = slot; i < mutableNode.sizeTable!.length; i++) {
+            mutableNode.sizeTable![i] -= removedChildCount;
+          }
         }
-      }
-      // No need to reassign children/sizeTable, they were mutated in place.
-    } else {
-      // Child was modified but not removed, update child in place
-      mutableNode.children[slot] = newChild!; // newChild cannot be null here
-      if (mutableNode.sizeTable != null) {
-        // Update size table from the modified slot onwards
-        // Update size table from the modified slot onwards (mutate in place)
-        int currentCumulativeCount =
-            (slot == 0) ? 0 : mutableNode.sizeTable![slot - 1];
-        for (int i = slot; i < mutableNode.sizeTable!.length; i++) {
-          // Use mutableNode.children and ensure count is int
-          currentCumulativeCount += mutableNode.children[i].count;
-          mutableNode.sizeTable![i] = currentCumulativeCount;
-        }
-        // No need to reassign children/sizeTable as they were mutated
-      }
-    }
-    // If child was modified (not removed), check if rebalancing is needed
-    if (newChild != null) {
-      // Check if the child is underfull and needs rebalancing/merging
-      // Use a threshold, e.g., less than half the branching factor
-      // Note: The exact threshold might depend on specific RRB-Tree variant rules.
-      const minSize = (kBranchingFactor + 1) ~/ 2; // Example: ceil(M/2)
-      if (newChild.count < minSize) {
-        // Attempt to rebalance or merge the children array
-        // Pass mutable node's lists and owner to rebalance/merge
-        // TODO: Update _rebalanceOrMerge and helpers to work transiently.
-        // Call _rebalanceOrMerge, passing owner. It will modify lists in place.
+        // Rebalance after removal
         _rebalanceOrMerge(
-          slot,
+          slot > 0 ? slot - 1 : slot,
           mutableNode.children,
           mutableNode.sizeTable,
-          owner, // Pass owner
+          owner,
         );
-        // No need to reassign children/sizeTable as they should be modified in place by _rebalanceOrMerge.
-        // newCount remains count - 1, calculated earlier
+      } else {
+        // Child modified, update mutable lists
+        mutableNode.children[slot] = newChild; // Modify mutable list
+        if (mutableNode.sizeTable != null) {
+          int currentCumulativeCount =
+              (slot == 0) ? 0 : mutableNode.sizeTable![slot - 1];
+          for (int i = slot; i < mutableNode.sizeTable!.length; i++) {
+            currentCumulativeCount += mutableNode.children[i].count;
+            mutableNode.sizeTable![i] = currentCumulativeCount;
+          }
+        }
+        // Rebalance if child is underfull
+        const minSize = (kBranchingFactor + 1) ~/ 2;
+        if (newChild.count < minSize) {
+          _rebalanceOrMerge(
+            slot,
+            mutableNode.children,
+            mutableNode.sizeTable,
+            owner,
+          );
+        }
+      }
+
+      mutableNode.count = newCount;
+      // Check for collapse after potential rebalance
+      if (mutableNode.children.length == 1 && mutableNode.height > 0) {
+        return mutableNode.children[0];
+      }
+      if (mutableNode.children.isEmpty) {
+        // Check again after rebalance
+        return null;
+      }
+      return mutableNode;
+    } else {
+      // --- Immutable Path ---
+      if (newChild == null) {
+        // Child became empty
+        if (this.children.length == 1) return null; // Node becomes empty
+
+        final newChildren = List<RrbNode<E>>.of(children)..removeAt(slot);
+        List<int>? newSizeTable = null;
+        if (sizeTable != null) {
+          final removedChildCount = oldChild.count;
+          newSizeTable = List<int>.of(sizeTable!)..removeAt(slot);
+          for (int i = slot; i < newSizeTable.length; i++) {
+            newSizeTable[i] -= removedChildCount;
+          }
+        }
+        // TODO: Immutable rebalancing? For now, return potentially unbalanced.
+        return RrbInternalNode<E>(height, newCount, newChildren, newSizeTable);
+      } else {
+        // Child modified
+        final newChildren = List<RrbNode<E>>.of(children);
+        newChildren[slot] = newChild;
+        List<int>? newSizeTable = null;
+        if (sizeTable != null) {
+          newSizeTable = List<int>.of(sizeTable!);
+          int currentCumulativeCount = (slot == 0) ? 0 : newSizeTable[slot - 1];
+          for (int i = slot; i < newSizeTable.length; i++) {
+            currentCumulativeCount += newChildren[i].count;
+            newSizeTable[i] = currentCumulativeCount;
+          }
+        }
+        // TODO: Immutable rebalancing?
+        return RrbInternalNode<E>(height, newCount, newChildren, newSizeTable);
       }
     }
-    // If newChild was null, the child was removed earlier (lines 256-266)
-
-    // After potential rebalancing/merging, check if this node needs collapsing
-    // Use mutableNode.children for checks
-    if (mutableNode.children.length == 1 && mutableNode.height > 0) {
-      // If only one child remains, collapse this level by returning the child.
-      // The child might be mutable or immutable depending on recursive calls.
-      return mutableNode.children[0];
-    }
-
-    // If this node itself became empty after removal/merging
-    if (mutableNode.children.isEmpty) {
-      return null; // Node is gone
-    }
-
-    // Update count and return the (potentially) mutated node
-    mutableNode.count = newCount;
-    return mutableNode;
   } // End of removeAt
 
   // --- Rebalancing/Merging Helpers ---
@@ -1012,8 +1021,10 @@ class RrbInternalNode<E> extends RrbNode<E> {
     return RrbInternalNode<E>(
       height,
       count,
-      List<RrbNode<E>>.of(children), // Mutable copy
-      sizeTable != null ? List<int>.of(sizeTable!) : null, // Mutable copy
+      List<RrbNode<E>>.of(children, growable: true), // Mutable GROWABLE copy
+      sizeTable != null
+          ? List<int>.of(sizeTable!, growable: true)
+          : null, // Mutable GROWABLE copy
       owner, // Assign new owner
     );
   }
@@ -1105,20 +1116,38 @@ class RrbLeafNode<E> extends RrbNode<E> {
     }
   }
 
-  // Reverted removeAt to immutable logic. Transient logic moved to ApexListImpl.removeWhere.
   @override
   RrbNode<E>? removeAt(int index, [TransientOwner? owner]) {
-    // Keep owner for signature match
     assert(index >= 0 && index < count);
 
-    if (elements.length == 1) {
-      // Removing the only element makes the leaf empty
-      return null;
-    }
+    if (owner != null) {
+      // --- Transient Path ---
+      final mutableNode = ensureMutable(owner); // Ensure this node is mutable
+      assert(
+        index < mutableNode.elements.length,
+        "Index out of bounds for mutable elements",
+      );
 
-    // Create a new leaf node with the element removed (immutable operation)
-    final newElements = List<E>.of(elements)..removeAt(index);
-    return RrbLeafNode<E>(newElements, null); // Always return immutable node
+      if (mutableNode.elements.length == 1) {
+        // Removing the only element makes the leaf empty
+        // Return null to signal removal to the parent node.
+        return null;
+      }
+
+      // Modify the mutable list in place
+      mutableNode.elements.removeAt(index);
+      // Count is implicitly updated by list length change
+      return mutableNode; // Return the mutated node
+    } else {
+      // --- Immutable Path ---
+      if (elements.length == 1) {
+        // Removing the only element makes the leaf empty
+        return null;
+      }
+      // Create a new leaf node with the element removed
+      final newElements = List<E>.of(elements)..removeAt(index);
+      return RrbLeafNode<E>(newElements, null); // Return new immutable node
+    }
   }
 
   @override

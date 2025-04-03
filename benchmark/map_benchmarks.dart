@@ -1,5 +1,6 @@
 import 'package:benchmark_harness/benchmark_harness.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart';
+import 'package:apex_collections/apex_collections.dart'; // Import ApexMap
 
 // Placeholder for benchmark setup
 const int mapSize = 10000; // Example size, will need various sizes
@@ -145,11 +146,10 @@ class NativeMapUpdateBenchmark extends BenchmarkBase {
   }
 }
 
-// Placeholder for future ApexMap benchmarks will go here
 // --- fast_immutable_collections IMap Benchmarks ---
 
 class FIC_IMapAddBenchmark extends BenchmarkBase {
-  FIC_IMapAddBenchmark() : super('IMap(FIC).add[]');
+  FIC_IMapAddBenchmark() : super('IMap(FIC).add'); // Changed name from add[]
   late IMap<int, String> iMap;
   late int newKey;
 
@@ -283,7 +283,130 @@ class FIC_IMapUpdateBenchmark extends BenchmarkBase {
   }
 }
 
-// Placeholder for future ApexMap benchmarks will go here
+// --- ApexCollections ApexMap Benchmarks ---
+
+class ApexMapAddBenchmark extends BenchmarkBase {
+  ApexMapAddBenchmark() : super('ApexMap.add');
+  late ApexMap<int, String> apexMap;
+  late int newKey;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+    newKey = mapSize;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newApexMap = apexMap.add(newKey, 'new_value'); // Create new map
+  }
+}
+
+class ApexMapLookupBenchmark extends BenchmarkBase {
+  ApexMapLookupBenchmark() : super('ApexMap.lookup[]');
+  late ApexMap<int, String> apexMap;
+  late int lookupKey;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+    lookupKey = mapSize ~/ 2;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final value = apexMap[lookupKey];
+  }
+}
+
+class ApexMapRemoveBenchmark extends BenchmarkBase {
+  ApexMapRemoveBenchmark() : super('ApexMap.remove');
+  late ApexMap<int, String> apexMap;
+  late int removeKey;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+    removeKey = mapSize ~/ 2;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newApexMap = apexMap.remove(removeKey); // Create new map
+  }
+}
+
+class ApexMapIterateBenchmark extends BenchmarkBase {
+  ApexMapIterateBenchmark() : super('ApexMap.iterateEntries');
+  late ApexMap<int, String> apexMap;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+  }
+
+  @override
+  void run() {
+    var count = 0;
+    for (final entry in apexMap.entries) {
+      // Access key and value to prevent optimization
+      if (entry.key == -1) count++;
+      if (entry.value == '') count++;
+    }
+    if (count == -1) print('Should not happen');
+  }
+}
+
+class ApexMapAddAllBenchmark extends BenchmarkBase {
+  ApexMapAddAllBenchmark() : super('ApexMap.addAll');
+  late ApexMap<int, String> apexMap;
+  late Map<int, String> toAdd; // Can add a native map
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+    toAdd = {for (var i = 0; i < 10; i++) mapSize + i: 'new_value_$i'};
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newMap = apexMap.addAll(toAdd); // ApexMap.addAll takes Map
+  }
+}
+
+class ApexMapUpdateBenchmark extends BenchmarkBase {
+  // Combines update and putIfAbsent logic via the update method's ifAbsent
+  ApexMapUpdateBenchmark() : super('ApexMap.update (incl. ifAbsent)');
+  late ApexMap<int, String> apexMap;
+  late int existingKey;
+  late int newKey;
+
+  @override
+  void setup() {
+    apexMap = ApexMap.from(createTestData(mapSize));
+    existingKey = mapSize ~/ 2;
+    newKey = mapSize;
+  }
+
+  @override
+  void run() {
+    // Case 1: Key exists (update)
+    // ignore: unused_local_variable
+    final map1 = apexMap.update(existingKey, (value) => '${value}_updated');
+    // Case 2: Key doesn't exist (add via ifAbsent)
+    // ignore: unused_local_variable
+    final map2 = apexMap.update(
+      newKey,
+      (value) => 'should_not_happen',
+      ifAbsent: () => 'added_value',
+    );
+  }
+}
+
 // --- Main Runner ---
 
 void main() {
@@ -292,22 +415,31 @@ void main() {
   // Native Map Benchmarks
   print('\n-- Native Map --');
   NativeMapAddBenchmark().report();
-  NativeMapAddAllBenchmark().report(); // Added
+  NativeMapAddAllBenchmark().report();
   NativeMapLookupBenchmark().report();
-  NativeMapRemoveBenchmark().report(); // Note: Measures copy + remove
-  NativeMapPutIfAbsentBenchmark().report(); // Added
-  NativeMapUpdateBenchmark().report(); // Added
+  NativeMapRemoveBenchmark().report();
+  NativeMapPutIfAbsentBenchmark().report();
+  NativeMapUpdateBenchmark().report();
   NativeMapIterateBenchmark().report();
 
   // fast_immutable_collections IMap Benchmarks
   print('\n-- IMap (FIC) --');
   FIC_IMapAddBenchmark().report();
-  FIC_IMapAddAllBenchmark().report(); // Added
+  FIC_IMapAddAllBenchmark().report();
   FIC_IMapLookupBenchmark().report();
   FIC_IMapRemoveBenchmark().report();
-  FIC_IMapPutIfAbsentBenchmark().report(); // Added
-  FIC_IMapUpdateBenchmark().report(); // Added
+  FIC_IMapPutIfAbsentBenchmark().report();
+  FIC_IMapUpdateBenchmark().report();
   FIC_IMapIterateBenchmark().report();
+
+  // ApexCollections ApexMap Benchmarks
+  print('\n-- ApexMap --');
+  ApexMapAddBenchmark().report();
+  ApexMapAddAllBenchmark().report();
+  ApexMapLookupBenchmark().report();
+  ApexMapRemoveBenchmark().report();
+  ApexMapUpdateBenchmark().report(); // Covers update & putIfAbsent logic
+  ApexMapIterateBenchmark().report();
 
   print('----------------------------------------');
 }

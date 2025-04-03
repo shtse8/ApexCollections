@@ -207,26 +207,68 @@ class ApexListImpl<E> extends ApexList<E> {
   @override
   ApexList<E> addAll(Iterable<E> iterable) {
     // Optimize for empty iterable
-    if (iterable is List && iterable.isEmpty) return this;
-    if (iterable is Set && iterable.isEmpty) return this;
-    // Note: Cannot reliably check general Iterable for emptiness without iterating
+    final List<E> elementsToAdd;
+    if (iterable is List<E>) {
+      if (iterable.isEmpty) return this;
+      elementsToAdd = iterable; // Avoid copying if already a List
+    } else if (iterable is Set<E>) {
+      if (iterable.isEmpty) return this;
+      elementsToAdd = List<E>.of(iterable, growable: false); // Convert Set once
+    } else {
+      elementsToAdd = List<E>.of(
+        iterable,
+        growable: false,
+      ); // Convert general Iterable once
+      if (elementsToAdd.isEmpty) return this;
+    }
+    // Now elementsToAdd is guaranteed non-empty
 
     // Special case: Adding to an empty list is just creating a new list from the iterable
     if (isEmpty) {
-      // Avoid creating intermediate list if possible
-      if (iterable is ApexList<E>) return iterable;
       // Use the efficient factory constructor directly
-      return ApexListImpl<E>.fromIterable(iterable);
+      return ApexListImpl<E>.fromIterable(elementsToAdd);
     }
 
-    // TODO: Implement truly efficient bulk add using transients or node concatenation.
-    // Intermediate approach: Build a combined List dynamically and create ApexList once.
-    final combinedElements = List<E>.empty(growable: true);
-    combinedElements.addAll(this); // Add existing elements
-    combinedElements.addAll(iterable); // Add new elements
+    // --- Use Transient Add ---
+    final owner = rrb.TransientOwner();
+    // Get a mutable version of the current root node
+    rrb.RrbNode<E> mutableRoot;
+    if (_root is rrb.RrbInternalNode<E>) {
+      mutableRoot = (_root as rrb.RrbInternalNode<E>).ensureMutable(owner);
+    } else if (_root is rrb.RrbLeafNode<E>) {
+      mutableRoot = (_root as rrb.RrbLeafNode<E>).ensureMutable(owner);
+    } else {
+      // Should not happen if list is not empty
+      mutableRoot = rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>;
+    }
 
-    // Build the new list from the combined elements using the efficient factory.
-    return ApexListImpl<E>.fromIterable(combinedElements);
+    int additions = 0;
+    for (final element in elementsToAdd) {
+      // Pass owner to mutate the root node structure via transient add
+      // Note: RrbNode.add itself handles splits and returns the new root
+      mutableRoot = mutableRoot.add(
+        element,
+      ); // Owner is implicit on mutableRoot
+      additions++;
+    }
+
+    // If no additions occurred (e.g., iterable was empty after conversion, though checked earlier)
+    // or if the root reference didn't change (unlikely with additions), handle potential copy.
+    if (additions == 0) {
+      if (!identical(mutableRoot, _root)) {
+        // ensureMutable created a copy, but nothing was added. Freeze and return it.
+        final frozenRoot = mutableRoot.freeze(owner);
+        return ApexListImpl._(frozenRoot, _length);
+      }
+      return this; // No changes needed
+    }
+
+    // Freeze the final potentially mutable root node
+    final frozenRoot = mutableRoot.freeze(owner);
+    final newLength = _length + additions; // Use actual additions count
+
+    // Return new instance with the frozen root and updated count
+    return ApexListImpl._(frozenRoot, newLength);
   }
 
   @override
@@ -368,78 +410,31 @@ class ApexListImpl<E> extends ApexList<E> {
   ApexList<E> removeWhere(bool Function(E element) test) {
     if (isEmpty) return this;
 
-    // Use transient building for efficiency
-    final owner = rrb.TransientOwner();
-    // Get a mutable version of the current root node
-    rrb.RrbNode<E> mutableRoot;
-    if (_root is rrb.RrbInternalNode<E>) {
-      mutableRoot = (_root as rrb.RrbInternalNode<E>).ensureMutable(owner);
-    } else if (_root is rrb.RrbLeafNode<E>) {
-      mutableRoot = (_root as rrb.RrbLeafNode<E>).ensureMutable(owner);
-    } else {
-      // Must be the empty leaf node
-      // Empty node is immutable, noop
+    // --- Immutable Approach ---
+    // Iterate, collect elements to keep, and build a new list.
+    // This avoids complex index mapping issues during transient mutation.
+    final elementsToKeep = <E>[];
+    bool changed = false;
+    for (final element in this) {
+      // Uses efficient iterator
+      if (!test(element)) {
+        elementsToKeep.add(element);
+      } else {
+        changed = true; // Mark that at least one element was removed
+      }
+    }
+
+    // If no elements were removed, return the original list.
+    if (!changed) {
       return this;
     }
-
-    int removalCount = 0;
-    // Iterate backwards to avoid index shifting issues during removal
-    for (int i = _length - 1; i >= 0; i--) {
-      // Need to get element before potential removal modifies structure
-      // This still uses the non-transient get operator, which is acceptable here.
-      final element = this[i];
-      if (test(element)) {
-        // Pass owner to mutate the root node structure
-        final removeResult = mutableRoot.removeAt(i, owner);
-
-        // Update root reference if it changed (e.g., collapsed or ensureMutable copied)
-        // If removeResult is null, the tree became empty.
-        // If removeResult is null, the tree became empty. Use the canonical empty leaf.
-        mutableRoot =
-            removeResult ?? rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>;
-
-        removalCount++;
-
-        // If the tree becomes empty during iteration, stop early.
-        // Check if the root became the canonical empty node.
-        if (identical(
-          mutableRoot,
-          rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>,
-        ))
-          break;
-      }
-    }
-
-    // If no removals occurred, handle potential copy from ensureMutable
-    if (removalCount == 0) {
-      if (!identical(mutableRoot, _root)) {
-        // ensureMutable created a copy, but nothing was removed. Freeze and return it.
-        final frozenRoot = mutableRoot.freeze(owner);
-        return ApexListImpl._(frozenRoot, _length);
-      }
-      return this; // No changes needed
-    }
-
-    // Freeze the final potentially mutable root node
-    final frozenRoot = mutableRoot.freeze(owner);
-    final newLength = _length - removalCount;
-
-    // If all elements were removed, return empty instance
-    if (newLength == 0) {
-      // Ensure frozenRoot is indeed the empty node after freezing
-      // Check if frozenRoot is the canonical empty node or just has count 0.
-      assert(
-        identical(
-              frozenRoot,
-              rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>,
-            ) ||
-            frozenRoot.count == 0,
-      );
+    // If all elements were removed, return empty.
+    if (elementsToKeep.isEmpty) {
       return emptyInstance<E>();
     }
 
-    // Return new instance with the frozen root and updated count
-    return ApexListImpl._(frozenRoot, newLength);
+    // Build a new list from the elements to keep using the efficient factory.
+    return ApexListImpl<E>.fromIterable(elementsToKeep);
   }
 
   @override
@@ -884,10 +879,12 @@ class ApexListImpl<E> extends ApexList<E> {
 
 /// Efficient iterator for traversing the RRB-Tree.
 class _RrbTreeIterator<E> implements Iterator<E> {
-  // Stack storing nodes currently being iterated.
-  final List<rrb.RrbNode<E>> _nodeStack = []; // Use prefixed type
-  // Stack storing the next child/element index to visit within the node at the same stack level.
+  // Stack for internal node traversal
+  final List<rrb.RrbNode<E>> _nodeStack = [];
   final List<int> _indexStack = [];
+
+  // Iterator for the current leaf node being processed
+  Iterator<E>? _leafIterator;
 
   E? _currentElement;
 
@@ -897,17 +894,15 @@ class _RrbTreeIterator<E> implements Iterator<E> {
     }
   }
 
-  /// Pushes an internal node onto the stack to start iterating its children.
+  /// Pushes a node onto the stack (typically internal nodes).
   void _pushNode(rrb.RrbNode<E> node) {
-    // Use prefixed type
     _nodeStack.add(node);
-    _indexStack.add(0); // Start iteration from the first child/element
+    _indexStack.add(0);
   }
 
   @override
   E get current {
     if (_currentElement == null) {
-      // moveNext must be called and return true before accessing current.
       throw StateError('No current element. Call moveNext() first.');
     }
     return _currentElement!;
@@ -915,31 +910,44 @@ class _RrbTreeIterator<E> implements Iterator<E> {
 
   @override
   bool moveNext() {
+    // 1. Continue iterating through the current leaf if possible
+    if (_leafIterator != null) {
+      if (_leafIterator!.moveNext()) {
+        _currentElement = _leafIterator!.current;
+        return true;
+      } else {
+        _leafIterator = null; // Current leaf exhausted
+      }
+    }
+
+    // 2. If no active leaf iterator, traverse the node stack
     while (_nodeStack.isNotEmpty) {
       final node = _nodeStack.last;
       final index = _indexStack.last;
 
       if (node is rrb.RrbLeafNode<E>) {
-        // Use prefixed type
-        // Leaf node: yield the element at the current index
-        if (index < node.elements.length) {
-          _currentElement = node.elements[index];
-          _indexStack[_indexStack.length -
-              1]++; // Move to next element in this leaf
-          return true;
-        } else {
-          // Finished with this leaf node, pop it
-          _nodeStack.removeLast();
-          _indexStack.removeLast();
-          continue; // Continue with the parent node
+        // Found a leaf node
+        _nodeStack.removeLast(); // Pop this leaf from the node stack
+        _indexStack.removeLast();
+
+        if (node.elements.isNotEmpty) {
+          _leafIterator = node.elements.iterator;
+          // Immediately try to advance the new leaf iterator
+          if (_leafIterator!.moveNext()) {
+            _currentElement = _leafIterator!.current;
+            return true;
+          } else {
+            _leafIterator = null; // Leaf was empty, continue stack traversal
+          }
         }
+        // If leaf was empty or iterator exhausted immediately, continue loop
+        continue;
       } else if (node is rrb.RrbInternalNode<E>) {
-        // Use prefixed type
         // Internal node: descend into the next child
         if (index < node.children.length) {
           _indexStack[_indexStack.length -
-              1]++; // Move to next child in this internal node
-          _pushNode(node.children[index]); // Push the child node to explore
+              1]++; // Point to next child for later
+          _pushNode(node.children[index]); // Push child to process next
           continue; // Restart loop to process the newly pushed node
         } else {
           // Finished with this internal node's children, pop it
@@ -948,14 +956,15 @@ class _RrbTreeIterator<E> implements Iterator<E> {
           continue; // Continue with the parent node
         }
       } else {
-        // Should not happen if root wasn't empty (RrbEmptyNode case handled in constructor)
+        // Should only be EmptyNode initially, which isn't pushed.
+        // If encountered later, just pop.
         _nodeStack.removeLast();
         _indexStack.removeLast();
       }
     }
 
-    // Stack is empty, iteration complete
-    _currentElement = null; // Invalidate current
+    // Stack is empty and no leaf iterator is active, iteration complete
+    _currentElement = null;
     return false;
   }
 }

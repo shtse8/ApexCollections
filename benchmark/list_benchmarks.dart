@@ -1,5 +1,6 @@
 import 'package:benchmark_harness/benchmark_harness.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart';
+import 'package:apex_collections/apex_collections.dart'; // Import ApexList
 
 // Placeholder for benchmark setup
 const int listSize = 10000; // Example size, will need various sizes
@@ -317,7 +318,153 @@ class FIC_IListConcatBenchmark extends BenchmarkBase {
   }
 }
 
-// Placeholder for future ApexList benchmarks will go here
+// --- ApexCollections ApexList Benchmarks ---
+
+class ApexListAddBenchmark extends BenchmarkBase {
+  ApexListAddBenchmark() : super('ApexList.add');
+  late ApexList<int> apexList;
+
+  @override
+  void setup() {
+    // Use fromIterable for efficient setup
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+  }
+
+  @override
+  void run() {
+    apexList = apexList.add(listSize); // Must reassign due to immutability
+  }
+}
+
+class ApexListLookupBenchmark extends BenchmarkBase {
+  ApexListLookupBenchmark() : super('ApexList.lookup[]');
+  late ApexList<int> apexList;
+  late int lookupIndex;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+    lookupIndex = listSize ~/ 2;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final value = apexList[lookupIndex];
+  }
+}
+
+class ApexListRemoveAtBenchmark extends BenchmarkBase {
+  ApexListRemoveAtBenchmark() : super('ApexList.removeAt');
+  late ApexList<int> apexList;
+  late int removeIndex;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+    removeIndex = listSize ~/ 2;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newList = apexList.removeAt(removeIndex); // Create new list
+  }
+}
+
+class ApexListIterateBenchmark extends BenchmarkBase {
+  ApexListIterateBenchmark() : super('ApexList.iterateSum');
+  late ApexList<int> apexList;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+  }
+
+  @override
+  void run() {
+    var sum = 0;
+    for (final item in apexList) {
+      sum += item;
+    }
+    // Prevent compiler optimizing out the loop
+    if (sum == -1) print('Should not happen');
+  }
+}
+
+class ApexListAddAllBenchmark extends BenchmarkBase {
+  ApexListAddAllBenchmark() : super('ApexList.addAll');
+  late ApexList<int> apexList;
+  late List<int> toAdd; // Can add a native list
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+    toAdd = List.generate(10, (i) => listSize + i);
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newList = apexList.addAll(toAdd);
+  }
+}
+
+class ApexListRemoveWhereBenchmark extends BenchmarkBase {
+  ApexListRemoveWhereBenchmark() : super('ApexList.removeWhere');
+  late ApexList<int> apexList;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newList = apexList.removeWhere((element) => element.isEven);
+  }
+}
+
+class ApexListSublistBenchmark extends BenchmarkBase {
+  ApexListSublistBenchmark() : super('ApexList.sublist');
+  late ApexList<int> apexList;
+  late int start;
+  late int end;
+
+  @override
+  void setup() {
+    apexList = ApexList.from(List.generate(listSize, (i) => i));
+    start = listSize ~/ 4;
+    end = listSize * 3 ~/ 4;
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final sub = apexList.sublist(start, end);
+  }
+}
+
+class ApexListConcatBenchmark extends BenchmarkBase {
+  ApexListConcatBenchmark() : super('ApexList.concat(+)');
+  late ApexList<int> apexList1;
+  late ApexList<int> apexList2;
+
+  @override
+  void setup() {
+    final halfSize = listSize ~/ 2;
+    apexList1 = ApexList.from(List.generate(halfSize, (i) => i));
+    apexList2 = ApexList.from(List.generate(halfSize, (i) => i + halfSize));
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final combined = apexList1 + apexList2; // Using + operator
+  }
+}
+
 // --- Main Runner ---
 
 void main() {
@@ -326,24 +473,35 @@ void main() {
   // Native List Benchmarks
   print('\n-- Native List --');
   NativeListAddBenchmark().report();
-  NativeListAddAllBenchmark().report(); // Added
+  NativeListAddAllBenchmark().report();
   NativeListLookupBenchmark().report();
   NativeListRemoveAtBenchmark().report(); // Note: Measures copy + remove
+  NativeListRemoveWhereBenchmark().report();
   NativeListIterateBenchmark().report();
-  NativeListRemoveWhereBenchmark().report(); // Added
+  NativeListSublistBenchmark().report();
+  NativeListConcatBenchmark().report();
 
-  NativeListSublistBenchmark().report(); // Added
   // fast_immutable_collections IList Benchmarks
-  NativeListConcatBenchmark().report(); // Added
   print('\n-- IList (FIC) --');
   FIC_IListAddBenchmark().report();
-  FIC_IListAddAllBenchmark().report(); // Added
+  FIC_IListAddAllBenchmark().report();
   FIC_IListLookupBenchmark().report();
   FIC_IListRemoveAtBenchmark().report();
-  FIC_IListRemoveWhereBenchmark().report(); // Added
+  FIC_IListRemoveWhereBenchmark().report();
   FIC_IListIterateBenchmark().report();
-  FIC_IListSublistBenchmark().report(); // Added
+  FIC_IListSublistBenchmark().report();
+  FIC_IListConcatBenchmark().report();
 
-  FIC_IListConcatBenchmark().report(); // Added
+  // ApexCollections ApexList Benchmarks
+  print('\n-- ApexList --');
+  ApexListAddBenchmark().report();
+  ApexListAddAllBenchmark().report();
+  ApexListLookupBenchmark().report();
+  ApexListRemoveAtBenchmark().report();
+  ApexListRemoveWhereBenchmark().report();
+  ApexListIterateBenchmark().report();
+  ApexListSublistBenchmark().report();
+  ApexListConcatBenchmark().report();
+
   print('------------------------------------------');
 }

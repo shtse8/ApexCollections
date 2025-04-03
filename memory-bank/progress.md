@@ -1,45 +1,44 @@
 # Progress: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~04:58 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~13:21 UTC+1)
 
-**Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established, and benchmark suite refined.
+**Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established.
 **Phase 2: Core Design & API Definition COMPLETE.** Public APIs for `ApexList` and `ApexMap` defined. Core node structure files outlined. Basic implementation classes created.
+**Phase 3: Implementation & Unit Testing COMPLETE** (Excluding deferred `removeAt` debugging). Core logic for `ApexListImpl` and `ApexMapImpl` implemented and unit tested. Transient logic refined.
+**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** Initial benchmarks run, `ApexList.addAll` optimized.
 
 ## What Works
 
 -   Project directory structure created and Git repository initialized.
--   Core Memory Bank files established and updated through Phase 1 & start of Phase 2.
+-   Core Memory Bank files established and updated.
 -   Basic Dart package structure confirmed (`pubspec.yaml`, etc.).
--   Baseline benchmark suite for native and FIC collections is functional.
 -   Public API definitions for `ApexList` (`lib/src/list/apex_list_api.dart`) and `ApexMap` (`lib/src/map/apex_map_api.dart`).
--   Basic node structure outlines for RRB-Trees (`lib/src/list/rrb_node.dart`) and CHAMP Tries (`lib/src/map/champ_node.dart`).
--   `ApexMapImpl` `add`/`remove` methods updated to handle length correctly based on node operation results (`ChampAddResult`/`ChampRemoveResult`).
--   `ChampNode` subclasses (`add`/`remove`) updated to return result objects (`ChampAddResult`/`ChampRemoveResult`) indicating size changes.
--   `ChampInternalNode` helper methods (`_replaceDataWithNode`, `_replaceNodeWithData`) corrected with proper `bitpos` handling.
--   Local `bitCount` function defined and used in `champ_node.dart`.
+-   Node structures implemented for RRB-Trees (`lib/src/list/rrb_node.dart`) and CHAMP Tries (`lib/src/map/champ_node.dart`), including transient mutation logic.
+-   `ApexMapImpl` methods implemented, using transient operations for bulk methods. Shows strong performance for modifications/iteration.
+-   `ApexListImpl` methods implemented using node operations or standard patterns. `addAll` optimized with transient logic. `operator+` reverted to iterate/rebuild. Shows good performance for single operations.
 -   Efficient iterators implemented for `ApexMapImpl` (`_ChampTrieIterator`) and `ApexListImpl` (`_RrbTreeIterator`).
--   Basic unit tests added for `ApexMap` core methods and iterator (`apex_map_test.dart`).
--   Partial implementation of RRB-Tree rebalancing/merging helpers (`_borrowFromLeft`, `_borrowFromRight`, `_mergeWithLeft`) in `RrbInternalNode` (leaf cases done, internal cases have TODOs).
--   Added basic unit tests for `ApexList` core methods and iterator (`apex_list_test.dart`).
+-   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases.
+-   Benchmark suite created (`benchmark/`) comparing `ApexList`/`ApexMap` against native and FIC collections. Initial results gathered.
 
 ## What's Left to Build (High-Level)
 
 -   **Phase 1:** Research & Benchmarking **(DONE)**
 -   **Phase 2:** Core Design & API Definition **(DONE)**
--   **Phase 3:** Implementation & Unit Testing (Core logic). **(IN PROGRESS)**
--   **Phase 4:** Performance Optimization & Benchmarking (Refinement).
+-   **Phase 3:** Implementation & Unit Testing **(DONE - Known Issue Deferred)**
+-   **Phase 4:** Performance Optimization & Benchmarking **(IN PROGRESS)**
 -   **Phase 5:** Documentation & Examples (GitHub Pages, `dart doc`).
 -   **Phase 6:** CI/CD & Publishing (`pub.dev`).
 
 ## Known Issues / Blockers
 
--   RRB-Tree rebalancing/merging logic in `RrbInternalNode.removeAt` appears mostly correct, but a test case involving many removals (`removeAt causes node merges/rebalancing`) fails with an assertion in `RrbLeafNode.removeAt`, indicating an invalid index is passed down during complex rebalancing scenarios. The exact interaction causing this needs further investigation.
--   `ApexListImpl` methods (`insert`, `addAll`, `insertAll`, `sublist`, `operator+`, `indexOf`, `==`, `hashCode`) have been updated with more efficient (though not fully node-optimized for bulk/slice/concat) implementations. `removeWhere`, `lastIndexOf`, `clear`, `asMap`, `sort`, `shuffle` still use basic implementations.
--   `ApexMapImpl` needs efficient implementations for bulk operations (`fromMap`, `addAll`), `update`, `updateAll`, `removeWhere`, `mapEntries`, and optimized `==`/`hashCode`.
+-   RRB-Tree rebalancing/merging logic in `RrbInternalNode.removeAt` appears mostly correct, but a test case involving many removals (`removeAt causes node merges/rebalancing`) fails with an assertion in `RrbLeafNode.removeAt`, indicating an invalid index is passed down during complex rebalancing scenarios. The exact interaction causing this needs further investigation. **(Deferred)**
+-   `ApexList` iteration performance (`_RrbTreeIterator`) is significantly slower than native List and FIC IList.
+-   `ApexList` `sublist` and `concat(+)` performance can be improved via node-level optimizations.
 
-## Next Milestones (Phase 3 Continuation)
+## Next Milestones (Phase 4 Continuation)
 
-1.  **Debug RRB-Tree `removeAt` Rebalancing:** Investigate the assertion failure in the `removeAt causes node merges/rebalancing` test to pinpoint the index calculation issue during complex removals in relaxed nodes.
-2.  **Implement Remaining Efficient `ApexListImpl` Methods:** Implement efficient versions for `removeWhere`, `lastIndexOf`, `clear`, `asMap`, `sort`, `shuffle`. Consider node-level optimizations for `sublist` and `operator+`.
-3.  **Complete `ApexList` Unit Tests:** Add tests for the remaining methods (`remove`, `removeWhere`, `lastIndexOf`, etc.).
-4.  **Refine `ApexMapImpl` Methods:** Implement efficient bulk operations and `==`/`hashCode` for `ApexMapImpl`.
+1.  **(Deferred) Debug RRB-Tree `removeAt` Rebalancing:** Investigate the assertion failure.
+2.  **Investigate `ApexList` Iterator Performance:** Analyze `_RrbTreeIterator` implementation for bottlenecks.
+3.  **Optimize `ApexList` Bulk Operations (Post-Iterator Fix):** Revisit `sublist`, `operator+` for node-level optimizations. Consider transient builder.
+4.  **Re-run Benchmarks:** After optimizations, re-run benchmarks.
+5.  **Begin Documentation:** Start writing basic API documentation.

@@ -36,26 +36,34 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     }
     // Use transient building for efficiency
     final owner = champ.TransientOwner();
-    champ.ChampNode<K, V> root = champ.ChampEmptyNode<K, V>();
+    // Start with a null root, create the first node on the first iteration
+    champ.ChampNode<K, V>? root;
     int count = 0;
 
-    // Ensure the root starts mutable if needed (though empty is immutable)
-    // This pattern is more relevant when starting from an existing node.
-    // For building from empty, we just keep adding.
-
     map.forEach((key, value) {
-      // Pass owner to potentially mutate the root node structure
-      final result = root.add(key, value, key.hashCode, 0, owner);
-      root =
-          result
-              .node; // Update root reference (might be the same mutable node or a new one)
-      if (result.didAdd) {
-        count++;
+      if (root == null) {
+        // First element: create the initial DataNode directly
+        root = champ.ChampDataNode<K, V>(key.hashCode, key, value);
+        count = 1; // Initialize count
+      } else {
+        // Subsequent elements: add to the existing root using transient owner
+        final result = root!.add(key, value, key.hashCode, 0, owner);
+        root = result.node; // Update root reference
+        if (result.didAdd) {
+          count++;
+        }
       }
     });
 
-    // Freeze the final potentially mutable root node
-    final frozenRoot = root.freeze(owner);
+    // If the map was empty after all, root will be null. Return canonical empty.
+    if (root == null) {
+      return emptyInstance<K, V>();
+    }
+
+    // Otherwise, root is non-null. Freeze the final potentially mutable root node.
+    final frozenRoot = root!.freeze(
+      owner,
+    ); // Use null assertion '!' as root is guaranteed non-null here
     return ApexMapImpl._(frozenRoot, count);
   }
 
