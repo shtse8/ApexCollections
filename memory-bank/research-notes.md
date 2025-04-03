@@ -102,6 +102,14 @@ Based on Bagwell/Rompf (2011) paper, Sections 1.2 & 5.1:
 -   [ ] Investigate the structure of nodes, branching factor, balancing mechanisms, and algorithms for key operations (append, update, lookup, slice, concat).
 -   [ ] Assess feasibility for `const` empty list creation in Dart.
 
+
+### `const` Empty List Feasibility (Assessment - 2025-04-03 ~03:03 UTC+1)
+
+-   An empty RRB-Tree can be represented by a `null` root or a singleton empty node.
+-   A `const ApexList()` constructor could initialize `root = null` and `count = 0`.
+-   Alternatively, a shared singleton empty node instance (e.g., representing an empty leaf `const []`) can be `const`.
+-   **Conclusion:** Feasible in Dart.
+
 ## CHAMP Tries (for `ApexMap`)
 
 **(Timestamp: 2025-04-03 ~02:55 UTC+1)**
@@ -174,6 +182,15 @@ Based on Steindorfer (2017) thesis, Chapter 3:
     -   *Status:* Link available. **Action:** Read for a summary of CHAMP vs. HAMT differences and claimed improvements.
 3.  **Implementation (Java):**
     -   `norswap/triemap` ([https://github.com/norswap/triemap](https://github.com/norswap/triemap))
+
+
+### `const` Empty Map Feasibility (Assessment - 2025-04-03 ~03:03 UTC+1)
+
+-   An empty CHAMP Trie is typically represented by a shared singleton empty node instance.
+-   This empty node instance would have `datamap = 0`, `nodemap = 0`, and `contentArray = const []`.
+-   Such a node can be declared `const` in Dart.
+-   The `ApexMap` class can have a `const` constructor referencing this shared `const` empty node and setting `count = 0`.
+-   **Conclusion:** Feasible in Dart.
     -   *Status:* Link available. **Action:** Browse codebase later for implementation details.
 
 ### Initial Research Tasks:
