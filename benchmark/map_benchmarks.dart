@@ -85,6 +85,66 @@ class NativeMapIterateBenchmark extends BenchmarkBase {
   }
 }
 
+class NativeMapAddAllBenchmark extends BenchmarkBase {
+  NativeMapAddAllBenchmark() : super('Map(mutable).addAll');
+  late Map<int, String> map;
+  late Map<int, String> toAdd;
+
+  @override
+  void setup() {
+    map = createTestData(mapSize);
+    toAdd = {for (var i = 0; i < 10; i++) mapSize + i: 'new_value_$i'};
+  }
+
+  @override
+  void run() {
+    // Create copy to measure addAll without modifying base map across runs
+    final mapCopy = Map.of(map);
+    mapCopy.addAll(toAdd);
+  }
+}
+
+class NativeMapPutIfAbsentBenchmark extends BenchmarkBase {
+  NativeMapPutIfAbsentBenchmark() : super('Map(mutable).putIfAbsent');
+  late Map<int, String> baseMap;
+  late int existingKey;
+  late int newKey;
+
+  @override
+  void setup() {
+    baseMap = createTestData(mapSize);
+    existingKey = mapSize ~/ 2;
+    newKey = mapSize;
+  }
+
+  @override
+  void run() {
+    final mapCopy = Map.of(baseMap);
+    // Case 1: Key exists
+    mapCopy.putIfAbsent(existingKey, () => 'should_not_be_added');
+    // Case 2: Key doesn't exist
+    mapCopy.putIfAbsent(newKey, () => 'added_value');
+  }
+}
+
+class NativeMapUpdateBenchmark extends BenchmarkBase {
+  NativeMapUpdateBenchmark() : super('Map(mutable).update');
+  late Map<int, String> baseMap;
+  late int updateKey;
+
+  @override
+  void setup() {
+    baseMap = createTestData(mapSize);
+    updateKey = mapSize ~/ 2; // Key that exists
+  }
+
+  @override
+  void run() {
+    final mapCopy = Map.of(baseMap);
+    mapCopy.update(updateKey, (value) => '${value}_updated');
+  }
+}
+
 // Placeholder for future ApexMap benchmarks will go here
 // --- fast_immutable_collections IMap Benchmarks ---
 
@@ -163,6 +223,66 @@ class FIC_IMapIterateBenchmark extends BenchmarkBase {
   }
 }
 
+class FIC_IMapAddAllBenchmark extends BenchmarkBase {
+  FIC_IMapAddAllBenchmark() : super('IMap(FIC).addAll');
+  late IMap<int, String> iMap;
+  late Map<int, String> toAdd; // Can add a native map
+
+  @override
+  void setup() {
+    iMap = IMap(createTestData(mapSize));
+    toAdd = {for (var i = 0; i < 10; i++) mapSize + i: 'new_value_$i'};
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newMap = iMap.addAll(IMap(toAdd)); // Convert to IMap before adding
+  }
+}
+
+class FIC_IMapPutIfAbsentBenchmark extends BenchmarkBase {
+  FIC_IMapPutIfAbsentBenchmark() : super('IMap(FIC).putIfAbsent');
+  late IMap<int, String> iMap;
+  late int existingKey;
+  late int newKey;
+
+  @override
+  void setup() {
+    iMap = IMap(createTestData(mapSize));
+    existingKey = mapSize ~/ 2;
+    newKey = mapSize;
+  }
+
+  @override
+  void run() {
+    // Case 1: Key exists
+    // ignore: unused_local_variable
+    final map1 = iMap.putIfAbsent(existingKey, () => 'should_not_be_added');
+    // Case 2: Key doesn't exist
+    // ignore: unused_local_variable
+    final map2 = iMap.putIfAbsent(newKey, () => 'added_value');
+  }
+}
+
+class FIC_IMapUpdateBenchmark extends BenchmarkBase {
+  FIC_IMapUpdateBenchmark() : super('IMap(FIC).update');
+  late IMap<int, String> iMap;
+  late int updateKey;
+
+  @override
+  void setup() {
+    iMap = IMap(createTestData(mapSize));
+    updateKey = mapSize ~/ 2; // Key that exists
+  }
+
+  @override
+  void run() {
+    // ignore: unused_local_variable
+    final newMap = iMap.update(updateKey, (value) => '${value}_updated');
+  }
+}
+
 // Placeholder for future ApexMap benchmarks will go here
 // --- Main Runner ---
 
@@ -172,15 +292,21 @@ void main() {
   // Native Map Benchmarks
   print('\n-- Native Map --');
   NativeMapAddBenchmark().report();
+  NativeMapAddAllBenchmark().report(); // Added
   NativeMapLookupBenchmark().report();
   NativeMapRemoveBenchmark().report(); // Note: Measures copy + remove
+  NativeMapPutIfAbsentBenchmark().report(); // Added
+  NativeMapUpdateBenchmark().report(); // Added
   NativeMapIterateBenchmark().report();
 
   // fast_immutable_collections IMap Benchmarks
   print('\n-- IMap (FIC) --');
   FIC_IMapAddBenchmark().report();
+  FIC_IMapAddAllBenchmark().report(); // Added
   FIC_IMapLookupBenchmark().report();
   FIC_IMapRemoveBenchmark().report();
+  FIC_IMapPutIfAbsentBenchmark().report(); // Added
+  FIC_IMapUpdateBenchmark().report(); // Added
   FIC_IMapIterateBenchmark().report();
 
   print('----------------------------------------');
