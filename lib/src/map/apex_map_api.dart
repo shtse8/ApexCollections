@@ -1,6 +1,7 @@
 // For equality
 import 'package:meta/meta.dart';
 import 'apex_map.dart'; // Contains ApexMapImpl and its emptyInstance
+import 'champ_node.dart' as champ;
 
 /// Abstract definition for an immutable, persistent map based on CHAMP Tries.
 ///
@@ -13,6 +14,7 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   ///
   /// This should be a const constructor pointing to a shared empty instance.
   /// Creates an empty ApexMap.
+  /// Returns a new, empty map instance.
   /// Returns the canonical empty map instance.
   factory ApexMap.empty() => ApexMapImpl.emptyInstance<K, V>();
 

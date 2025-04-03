@@ -12,74 +12,95 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   final int _length;
   // TODO: Consider caching hashCode
 
-  /// The canonical empty instance (internal).
-  static final ApexMapImpl _emptyInstance = ApexMapImpl._(
-    champ.ChampEmptyNode.instance(),
+  /// The canonical empty instance (internal). Use Never for type safety.
+  static const ApexMapImpl<Never, Never> _emptyInstance = ApexMapImpl._(
+    const champ.ChampEmptyNode(), // Use const constructor
     0,
   );
 
   /// Public accessor for the canonical empty instance.
   static ApexMapImpl<K, V> emptyInstance<K, V>() =>
-      _emptyInstance as ApexMapImpl<K, V>;
+      _emptyInstance as ApexMapImpl<K, V>; // Cast the const instance
 
-  /// Internal constructor. Not const because ChampEmptyNode.instance() isn't const.
-  ApexMapImpl._(this._root, this._length);
-
-  // --- Core Properties ---
+  /// Internal const constructor.
+  const ApexMapImpl._(this._root, this._length);
 
   /// Factory constructor to create from a Map.
   factory ApexMapImpl.fromMap(Map<K, V> map) {
     if (map.isEmpty) {
+      // Return the canonical empty instance via the getter
       return emptyInstance<K, V>();
     }
-    // Basic implementation: start with empty and repeatedly add. Inefficient.
-    // TODO: Actual implementation using builder/nodes for efficiency
-    ApexMap<K, V> apexMap = emptyInstance<K, V>();
+    // More efficient than the previous stub: build the node structure first.
+    // TODO: Implement truly efficient bulk loading (e.g., using transients).
+    champ.ChampNode<K, V> root =
+        const champ.ChampEmptyNode(); // Start with new empty node
+    int count = 0;
     map.forEach((key, value) {
-      apexMap = apexMap.add(key, value); // Uses the basic add implementation
+      // Use node's add directly
+      final result = root.add(key, value, key.hashCode, 0);
+      root = result.node;
+      if (result.didAdd) {
+        count++;
+      }
     });
-    // Need to handle length correctly based on add/update logic in 'add'
-    // For now, assume length is map.length (only correct if no updates happened)
-    // return ApexMapImpl._((apexMap as ApexMapImpl)._root, map.length);
-    // Let's return the result of the adds, length will be wrong until 'add' is fixed.
-    return apexMap as ApexMapImpl<K, V>;
+    // No need to cast root here as it starts typed correctly
+    return ApexMapImpl._(root, count);
   }
 
   @override
   int get length => _length;
 
   @override
-  bool get isEmpty => _length == 0;
+  bool get isEmpty => _length == 0; // Can also check _root.isEmptyNode
 
   @override
   bool get isNotEmpty => _length > 0;
 
   @override
-  // Delegates to the efficient entries iterator
-  Iterable<K> get keys => entries.map((e) => e.key);
+  // Use the efficient iterator directly
+  Iterable<K> get keys sync* {
+    final iterator = _ChampTrieIterator<K, V>(_root);
+    while (iterator.moveNext()) {
+      yield iterator.current.key;
+    }
+  }
 
   @override
-  // Delegates to the efficient entries iterator
-  Iterable<V> get values => entries.map((e) => e.value);
+  // Use the efficient iterator directly
+  Iterable<V> get values sync* {
+    final iterator = _ChampTrieIterator<K, V>(_root);
+    while (iterator.moveNext()) {
+      yield iterator.current.value;
+    }
+  }
+
+  @override
+  // Return 'this' as ApexMap itself is the iterable of entries
+  Iterable<MapEntry<K, V>> get entries => this;
 
   // --- Element Access ---
 
   @override
   V? operator [](K key) {
     // TODO: Handle null keys if necessary based on API decision
+    // Explicitly handle empty case to avoid type issues with Never node
+    if (isEmpty) return null;
     return _root.get(key, key.hashCode, 0);
   }
 
   @override
   bool containsKey(K key) {
-    return this[key] != null; // Simple check, might optimize later
+    if (isEmpty) return false; // Optimization for empty map
+    return this[key] != null; // Simple check, relies on efficient operator []
   }
 
   @override
   bool containsValue(V value) {
-    // Requires iterating values - potentially expensive. Basic implementation.
-    // TODO: Optimize if possible (unlikely without extra data structures).
+    if (isEmpty) return false;
+    // Requires iterating values - potentially expensive.
     for (final entry in entries) {
+      // Uses efficient iterator
       if (entry.value == value) {
         return true;
       }
@@ -92,9 +113,14 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   ApexMap<K, V> add(K key, V value) {
     // TODO: Handle null keys if necessary
-    // Assume _root.add returns an object like:
-    // class ChampAddResult<K, V> { final ChampNode<K, V> node; final bool didAdd; ... }
-    final addResult = _root.add(key, value, key.hashCode, 0);
+    final champ.ChampAddResult<K, V> addResult;
+    // Handle adding to the logical empty map explicitly
+    if (_root.isEmptyNode) {
+      final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, value);
+      addResult = (node: newNode, didAdd: true);
+    } else {
+      addResult = _root.add(key, value, key.hashCode, 0);
+    }
 
     // If the node itself didn't change, return the original map.
     if (identical(addResult.node, _root)) return this;
@@ -107,21 +133,43 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
   @override
   ApexMap<K, V> addAll(Map<K, V> other) {
-    // Basic implementation: repeatedly call add. Inefficient.
-    // TODO: Efficient bulk add, possibly using transient builder
     if (other.isEmpty) return this;
-    ApexMap<K, V> current = this;
+
+    // Special case: Adding to an empty map
+    if (isEmpty) {
+      return ApexMapImpl<K, V>.fromMap(other); // Use efficient factory
+    }
+
+    // TODO: Implement truly efficient bulk loading (e.g., using transients).
+    // Intermediate approach: build the node structure first.
+    champ.ChampNode<K, V> root = _root; // Start from current root
+    int count = _length; // Start from current length
+    bool changed = false;
+
     other.forEach((key, value) {
-      current = current.add(key, value);
+      final result = root.add(key, value, key.hashCode, 0);
+      if (!identical(root, result.node)) {
+        root = result.node;
+        changed = true;
+      }
+      if (result.didAdd) {
+        count++;
+        changed = true; // Count change also means changed
+      }
     });
-    return current;
+
+    // Only create new instance if the root or count actually changed
+    if (!changed) {
+      return this;
+    }
+    return ApexMapImpl._(root, count);
   }
 
   @override
   ApexMap<K, V> remove(K key) {
     // TODO: Handle null keys if necessary
-    // Assume _root.remove returns an object like:
-    // class ChampRemoveResult<K, V> { final ChampNode<K, V> node; final bool didRemove; ... }
+    if (isEmpty) return this; // Cannot remove from empty
+
     final removeResult = _root.remove(key, key.hashCode, 0);
 
     // If the node itself didn't change, return the original map.
@@ -133,59 +181,108 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Ensure length doesn't go negative (shouldn't happen if didRemove is correct)
     assert(newLength >= 0);
 
+    // If the new root is empty, return the canonical empty instance
+    if (removeResult.node.isEmptyNode) {
+      return emptyInstance<K, V>();
+    }
+
     return ApexMapImpl._(removeResult.node, newLength);
   }
 
   @override
   ApexMap<K, V> update(
     K key,
-    V Function(V value) update, {
+    V Function(V value) updateFn, {
     V Function()? ifAbsent,
   }) {
-    // Basic implementation using get/add. Inefficient.
-    // TODO: Implement more efficiently using node operations.
-    final V? currentValue = this[key];
-    if (currentValue != null) {
-      final newValue = update(currentValue);
-      // Use add for update, relies on add handling key collision correctly
-      return add(key, newValue);
-    } else if (ifAbsent != null) {
-      final newValue = ifAbsent();
-      return add(key, newValue);
+    final champ.ChampUpdateResult<K, V> updateResult;
+    if (_root.isEmptyNode) {
+      // Handle empty case directly
+      if (ifAbsent != null) {
+        final newValue = ifAbsent();
+        final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, newValue);
+        updateResult = (node: newNode, sizeChanged: true);
+      } else {
+        // Key not found, no ifAbsent, no change
+        // Return the correctly typed empty instance
+        return emptyInstance<K, V>();
+      }
     } else {
-      // Key not found and no ifAbsent provided
+      // Delegate to the root node's update method.
+      updateResult = _root.update(
+        key,
+        key.hashCode,
+        0, // Initial shift
+        updateFn,
+        ifAbsentFn: ifAbsent, // Pass ifAbsent callback
+      );
+    }
+
+    // If the node didn't change, return the original map.
+    if (identical(updateResult.node, _root)) {
       return this;
     }
+
+    // Calculate new length based on whether the size changed (insertion happened).
+    final newLength = updateResult.sizeChanged ? _length + 1 : _length;
+
+    // If the new root is empty, return the canonical empty instance
+    if (updateResult.node.isEmptyNode) {
+      return emptyInstance<K, V>();
+    }
+
+    return ApexMapImpl._(updateResult.node, newLength);
   }
 
   @override
-  ApexMap<K, V> updateAll(V Function(K key, V value) update) {
-    // Basic implementation: iterate and build a new map. Inefficient.
-    // TODO: Implement more efficiently using node operations or transients.
+  ApexMap<K, V> updateAll(V Function(K key, V value) updateFn) {
     if (isEmpty) return this;
-    ApexMap<K, V> newMap = emptyInstance<K, V>();
+
+    // TODO: Implement truly efficient bulk update using transients.
+    // Intermediate approach: Iterate entries and build new node structure.
+    champ.ChampNode<K, V> root = _root; // Start with current root
+    bool changed = false;
+
+    // Iterate through existing entries and apply updateFn using node's update
     for (final entry in entries) {
-      newMap = newMap.add(entry.key, update(entry.key, entry.value));
+      // Uses efficient iterator
+      final key = entry.key;
+      final currentValue = entry.value;
+      final newValue = updateFn(key, currentValue);
+
+      // Only update the node structure if the value actually changed
+      if (!identical(newValue, currentValue)) {
+        // Use node's update. Since key exists, ifAbsentFn is not needed.
+        // sizeChanged should be false here as we are only updating.
+        final updateResult = root.update(key, key.hashCode, 0, (_) => newValue);
+        // Check if the node actually changed (it might not if update resulted in same value object)
+        if (!identical(root, updateResult.node)) {
+          root = updateResult.node;
+          changed = true; // Mark that at least one value changed structurally
+        }
+      }
     }
-    // Length remains the same
-    return newMap;
+
+    // Only return new instance if something changed
+    if (!changed) {
+      return this;
+    }
+    // Length doesn't change during updateAll
+    return ApexMapImpl._(root, _length);
   }
 
   @override
   V putIfAbsent(K key, V Function() ifAbsent) {
-    final existing = this[key];
+    final existing = this[key]; // Uses efficient operator []
     if (existing != null) {
       return existing;
     }
     // This API is awkward for immutable maps as it doesn't return the new map.
-    // A real implementation might need internal state or a different API.
-    // For the stub, we compute but don't modify 'this'.
+    // We compute the value but cannot modify 'this'.
     return ifAbsent();
-    // throw UnimplementedError('putIfAbsent');
   }
 
   // --- Iterable<MapEntry<K, V>> implementations ---
-  // Needs an efficient iterator over the CHAMP trie nodes.
 
   @override
   Iterator<MapEntry<K, V>> get iterator => _ChampTrieIterator<K, V>(_root);
@@ -282,21 +379,64 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     bool Function(MapEntry<K, V> value) test,
   ) => entries.takeWhile(test); // Delegate
   @override
-  List<MapEntry<K, V>> toList({bool growable = true}) =>
-      entries.toList(growable: growable); // Delegate
+  List<MapEntry<K, V>> toList({bool growable = true}) {
+    // Explicit implementation using iterator
+    final list = <MapEntry<K, V>>[];
+    final iter = iterator;
+    while (iter.moveNext()) {
+      list.add(iter.current);
+    }
+    if (growable) {
+      return list;
+    } else {
+      // If non-growable requested, copy to fixed-length list
+      return List<MapEntry<K, V>>.of(list, growable: false);
+    }
+  }
+
   @override
-  Set<MapEntry<K, V>> toSet() => entries.toSet(); // Delegate
+  Set<MapEntry<K, V>> toSet() {
+    // Explicit implementation using iterator to avoid potential recursion
+    final set = <MapEntry<K, V>>{};
+    final iter = iterator;
+    while (iter.moveNext()) {
+      set.add(iter.current);
+    }
+    return set;
+  }
+
   @override
-  Iterable<MapEntry<K, V>> where(bool Function(MapEntry<K, V> element) test) =>
-      entries.where(test); // Delegate
+  Iterable<MapEntry<K, V>> where(
+    bool Function(MapEntry<K, V> element) test,
+  ) sync* {
+    // Explicit implementation using iterator
+    final iter = iterator;
+    while (iter.moveNext()) {
+      if (test(iter.current)) {
+        yield iter.current;
+      }
+    }
+  }
+
   @override
-  Iterable<T> whereType<T>() => entries.whereType<T>(); // Delegate
+  Iterable<T> whereType<T>() sync* {
+    // Explicit implementation using iterator
+    final iter = iterator;
+    while (iter.moveNext()) {
+      // Need to check the type of the entry itself, not just yield
+      final current = iter.current;
+      if (current is T) {
+        yield current as T; // Add cast
+      }
+    }
+  }
 
   // --- Added API Methods ---
 
   @override
   ApexMap<K, V> clear() {
-    return emptyInstance<K, V>();
+    // Return a new empty instance via the factory
+    return ApexMap<K, V>.empty();
   }
 
   @override
@@ -311,63 +451,164 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   ApexMap<K2, V2> mapEntries<K2, V2>(
     MapEntry<K2, V2> Function(K key, V value) convert,
   ) {
-    // Basic implementation: iterate and build a new map. Inefficient.
-    // TODO: Implement more efficiently using node operations or transients.
-    if (isEmpty) return ApexMap.empty(); // Use API factory for target type
-    ApexMap<K2, V2> newMap = ApexMap.empty();
+    if (isEmpty) return ApexMap<K2, V2>.empty();
+
+    // TODO: Implement truly efficient mapping using transients/builders.
+    // Intermediate approach: Iterate entries and build new node structure directly.
+    champ.ChampNode<K2, V2> newRoot =
+        const champ.ChampEmptyNode(); // Assign const untyped empty node
+    int newCount = 0;
+    bool changed = false; // Track if the structure or content changes
+
     for (final entry in entries) {
+      // Uses efficient iterator
       final newEntry = convert(entry.key, entry.value);
-      newMap = newMap.add(newEntry.key, newEntry.value);
+      final K2 newKey = newEntry.key;
+      final V2 newValue = newEntry.value;
+      final int newKeyHash = newKey.hashCode;
+
+      // Try adding the new entry to the new root being built
+      final result = newRoot.add(newKey, newValue, newKeyHash, 0);
+
+      // Update root and count if necessary
+      if (!identical(newRoot, result.node)) {
+        newRoot = result.node;
+        changed = true; // Structure changed
+      }
+      if (result.didAdd) {
+        newCount++;
+        // If didAdd is true, it implies a change even if the root reference is the same (e.g., first element)
+        changed = true;
+      }
+      // Note: If result.didAdd is false (key collision), the value might still have changed.
+      // The current `add` implementation in champ_node handles overwriting.
+      // Relying on `!identical(newRoot, result.node)` captures structural changes from overwrites too.
     }
-    return newMap;
+
+    // If the resulting map is empty, return the canonical empty instance.
+    if (newCount == 0) return ApexMap<K2, V2>.empty();
+
+    // If no structural changes occurred and the count is the same,
+    // and if the types match, we could potentially return 'this'.
+    // This is complex to check correctly, especially value equality after conversion.
+    // Example check (use with caution):
+    // if (!changed && newCount == _length && this is ApexMap<K2, V2>) {
+    //   // Still need to verify values didn't change if structure is identical
+    //   bool valuesChanged = false;
+    //   try {
+    //      final tempNewMap = ApexMapImpl<K2, V2>._(newRoot, newCount);
+    //      for (final entry in entries) {
+    //         final newEntryCheck = convert(entry.key, entry.value);
+    //         if (tempNewMap[newEntryCheck.key] != newEntryCheck.value) {
+    //            valuesChanged = true;
+    //            break;
+    //         }
+    //      }
+    //   } catch (_) { valuesChanged = true; } // Assume change on error
+    //   if (!valuesChanged) return this as ApexMap<K2, V2>;
+    // }
+    // For simplicity and guaranteed correctness, we create the new instance if changed.
+    if (!changed) {
+      // If the node structure never changed reference and count is same,
+      // and types are compatible, we might be able to return this.
+      // However, the convert function could change values without changing structure/count.
+      // Safest is to return the new map unless we do a deeper value check.
+      // Let's return the new map for now.
+      // Consider adding the deep check later if performance demands it.
+    }
+
+    // Return the newly built map
+    return ApexMapImpl<K2, V2>._(newRoot, newCount);
   }
 
   @override
   ApexMap<K, V> removeWhere(bool Function(K key, V value) predicate) {
-    // Basic implementation: iterate and build a new map. Inefficient.
-    // TODO: Implement more efficiently using node operations or transients.
     if (isEmpty) return this;
-    ApexMap<K, V> current = this;
-    List<K> keysToRemove = [];
+
+    // TODO: Implement truly efficient bulk remove using transients.
+    // Intermediate approach: Iterate entries and build new node structure by keeping entries.
+    champ.ChampNode<K, V> root =
+        const champ.ChampEmptyNode(); // Start with empty
+    int count = 0;
+    bool changed = false; // Track if any elements were actually removed
+
     for (final entry in entries) {
-      if (predicate(entry.key, entry.value)) {
-        keysToRemove.add(entry.key);
+      // Uses efficient iterator
+      if (!predicate(entry.key, entry.value)) {
+        // Keep this entry - add it to the new structure
+        final result = root.add(entry.key, entry.value, entry.key.hashCode, 0);
+        root = result.node;
+        if (result.didAdd) {
+          // Should always be true when building from empty
+          count++;
+        }
+      } else {
+        changed = true; // Mark that at least one element was removed
       }
     }
 
-    if (keysToRemove.isEmpty) return this;
-
-    for (final key in keysToRemove) {
-      current = current.remove(key);
+    // If nothing was removed, return the original instance
+    if (!changed) {
+      return this;
     }
-    return current;
+    // If all elements were removed, return a new empty instance via factory
+    if (count == 0) {
+      return ApexMap<K, V>.empty();
+    }
+    // No need to cast root as it starts typed correctly if built from empty
+    return ApexMapImpl._(root, count);
   }
 
   // --- Equality and HashCode ---
-  static const collection.MapEquality _equality = collection.MapEquality();
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-    if (other is! ApexMap<K, V>) return false;
-    if (length != other.length) return false;
-    if (isEmpty && other.isEmpty) return true;
-    // TODO: Optimize equality check using tree comparison if possible.
-    // Fallback to MapEquality using standard maps (inefficient).
-    return _equality.equals(
-      Map<K, V>.fromEntries(entries),
-      Map<K, V>.fromEntries(other.entries),
-    );
+    if (other is ApexMap<K, V>) {
+      // Use 'is' for type check
+      if (length != other.length) return false;
+      if (isEmpty) return true; // Both empty and same length
+
+      // TODO: Optimize equality check using tree comparison if possible.
+      // Intermediate approach: Compare entries one by one.
+      try {
+        for (final entry in entries) {
+          // Uses efficient iterator
+          // Use other[key] which should be efficient (O(logN))
+          if (!other.containsKey(entry.key) ||
+              other[entry.key] != entry.value) {
+            return false;
+          }
+        }
+        return true; // All entries matched
+      } catch (_) {
+        // If other map throws during lookup, consider them unequal
+        return false;
+      }
+    }
+    return false; // Not an ApexMap<K, V>
   }
 
   @override
   int get hashCode {
-    if (isEmpty) return 0;
-    // TODO: Optimize hash calculation using tree structure.
-    // Fallback to MapEquality (inefficient).
-    return _equality.hash(Map<K, V>.fromEntries(entries));
+    // Based on the standard Jenkins hash combination used in MapEquality/Objects.hash
+    // Needs to be order-independent, so XOR hash codes of entries.
+    if (isEmpty) return 0; // Consistent hash for empty
+
+    int result = 0;
+    for (final entry in entries) {
+      // Uses efficient iterator
+      // Combine key and value hash codes for the entry's hash
+      int entryHash = entry.key.hashCode ^ entry.value.hashCode;
+      result =
+          result ^ entryHash; // XOR combine entry hashes (order-independent)
+    }
+    // Apply final avalanche step (similar to Objects.hash)
+    result = 0x1fffffff & (result + ((0x03ffffff & result) << 3));
+    result = result ^ (result >> 11);
+    return 0x1fffffff & (result + ((0x00003fff & result) << 15));
   }
-}
+} // <<< Closing brace for ApexMapImpl
 
 /// Efficient iterator for traversing the CHAMP Trie.
 class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
@@ -437,7 +678,7 @@ class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
         for (
           int currentBitpos = bitpos;
           currentBitpos <
-              (1 << champ.kBranchingFactor); // Use imported constant
+              (1 << champ.kBitPartitionSize); // Use imported constant
           currentBitpos <<= 1
         ) {
           if ((dataMap & currentBitpos) != 0) {
@@ -469,10 +710,19 @@ class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
             // Push the new sub-node to explore next
             _pushNode(subNode);
             // Restart the outer loop to process the newly pushed node
-            continue; // Use continue to restart the while loop with the new node
+            // Use break instead of continue to avoid processing the same node again immediately
+            break; // Exit inner for-loop, outer while-loop will process pushed node
           }
         }
-        // If we finish iterating through all bit positions for this node, pop it.
+        // If the inner loop completed without finding/pushing, pop the current node
+        if (_nodeStack.isNotEmpty && _nodeStack.last == node) {
+          // Check if a sub-node was pushed
+          _nodeStack.removeLast();
+          _bitposStack.removeLast();
+        }
+      } else {
+        // Should not happen if root wasn't empty (ChampEmptyNode case handled in constructor)
+        // Or if node was ChampDataNode (should not be pushed onto stack)
         _nodeStack.removeLast();
         _bitposStack.removeLast();
       }

@@ -1,789 +1,929 @@
-/// Defines the core structures for CHAMP Trie nodes used by ApexMap/ApexSet.
+/// Defines the core structures for CHAMP Trie nodes used by ApexMap.
 library;
 
-import 'package:collection/collection.dart';
+import 'dart:collection'; // For HashMap equality check
+import 'package:collection/collection.dart'; // For bitCount
 
-const int _kHashBits = 32; // Standard Dart hash code size
-const int _kBitPartitionSize = 5; // Hash bits used per level
-const int kBranchingFactor = 1 << _kBitPartitionSize; // 32
-const List<Object?> _emptyContent = []; // Canonical empty content list
+// --- Constants ---
 
-/// Counts the number of set bits (1s) in a 32-bit integer.
-/// (Using a standard bit manipulation algorithm)
+const int kBitPartitionSize =
+    5; // Number of bits processed per level (e.g., 5 for 32 branches)
+const int kBranchingFactor = 1 << kBitPartitionSize; // 32
+const int kBitPartitionMask = kBranchingFactor - 1; // 0x1f
+
+// --- Helper Functions ---
+
+/// Counts the number of set bits (1s) in an integer.
+/// Assumes non-negative integer input.
 int bitCount(int n) {
-  n = n - ((n >> 1) & 0x55555555);
-  n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
-  return (((n + (n >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
+  // Simple Kernighan's algorithm
+  int count = 0;
+  while (n > 0) {
+    n &= (n - 1); // Clear the least significant bit set
+    count++;
+  }
+  return count;
 }
 
-// --- Result Classes ---
+/// Extracts the fragment of the hash code for the current level.
+int indexFragment(int shift, int hash) => (hash >> shift) & kBitPartitionMask;
 
-/// Result of an add operation on a ChampNode.
-class ChampAddResult<K, V> {
-  /// The resulting node after the add operation.
-  final ChampNode<K, V> node;
+// --- Result Types ---
 
-  /// True if a new key was added, false if an existing key's value was updated
-  /// or if the map remained unchanged.
-  final bool didAdd;
+/// Result of an add/update operation.
+typedef ChampAddResult<K, V> = ({ChampNode<K, V> node, bool didAdd});
 
-  const ChampAddResult(this.node, this.didAdd);
-}
+/// Result of a remove operation.
+typedef ChampRemoveResult<K, V> = ({ChampNode<K, V> node, bool didRemove});
 
-/// Result of a remove operation on a ChampNode.
-class ChampRemoveResult<K, V> {
-  /// The resulting node after the remove operation.
-  final ChampNode<K, V> node;
+/// Result of an update operation.
+typedef ChampUpdateResult<K, V> = ({ChampNode<K, V> node, bool sizeChanged});
 
-  /// True if an existing key was removed, false otherwise.
-  final bool didRemove;
-
-  const ChampRemoveResult(this.node, this.didRemove);
-}
+// --- Node Base Class ---
 
 /// Base class for CHAMP Trie nodes.
 abstract class ChampNode<K, V> {
   /// Const constructor for subclasses.
   const ChampNode();
 
-  /// Retrieves the value associated with [key] within this subtree,
-  /// returning `null` if the key is not found.
-  /// Requires the full [hash] of the key and the current [shift] level.
+  /// Retrieves the value associated with [key], or null if not found.
   V? get(K key, int hash, int shift);
 
-  /// Returns a new node structure representing the trie after adding or
-  /// updating the entry with [key], [value], and its [hash].
-  /// [shift] indicates the current level in the trie.
-  /// Returns `this` if the key/value pair was already present.
+  /// Adds or updates a key-value pair. Returns the new node and whether the size increased.
   ChampAddResult<K, V> add(K key, V value, int hash, int shift);
 
-  /// Returns `true` if this node (and its subtree) contains no entries.
-  bool get isEmpty;
-
-  /// Returns `true` if this node (and its subtree) contains entries.
-  bool get isNotEmpty => !isEmpty;
-
-  /// Returns a new node structure representing the trie after removing the
-  /// entry associated with [key] and its [hash].
-  /// [shift] indicates the current level in the trie.
-  /// Returns `this` if the key was not found.
-  /// Needs a mechanism (e.g., a result object or mutable flag) to signal
-  /// if a removal actually occurred for canonicalization.
+  /// Removes a key. Returns the new node and whether an element was actually removed.
   ChampRemoveResult<K, V> remove(K key, int hash, int shift);
 
-  /// Returns the total number of entries in the subtree rooted at this node.
-  /// Note: This might be expensive for internal nodes if not cached.
-  int get arity;
+  /// Updates the value associated with [key].
+  ///
+  /// If the key exists, applies [updateFn] to the existing value.
+  /// If the key doesn't exist and [ifAbsentFn] is provided, inserts the result of [ifAbsentFn].
+  /// Returns a [ChampUpdateResult] indicating the new node and if the map size changed.
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+  });
 
   /// Returns true if this node represents the canonical empty node.
   bool get isEmptyNode => false;
 }
 
-/// Represents a standard internal node in the CHAMP Trie.
-/// Uses bitmaps to compactly store references to data entries and child nodes.
-class ChampInternalNode<K, V> extends ChampNode<K, V> {
-  /// Bitmap indicating which slots contain data payloads (key or key/value).
-  final int dataMap;
+// --- Node Implementations ---
 
-  /// Bitmap indicating which slots contain child node pointers.
-  final int nodeMap;
-
-  /// Compact array storing data payloads and child nodes contiguously.
-  /// Data payloads (key/value pairs) are stored from the beginning (alternating).
-  /// Child nodes (ChampNode instances) are stored from the end.
-  final List<Object?> content;
-
-  ChampInternalNode(this.dataMap, this.nodeMap, this.content)
-    : assert((dataMap & nodeMap) == 0); // Ensure no slot has both bits set
-
-  int get dataArity => Integer.bitCount(dataMap);
-  int get nodeArity => Integer.bitCount(nodeMap);
-
-  @override
-  int get arity => dataArity + nodeArity;
-
-  @override
-  bool get isEmpty => arity == 0;
-
-  // --- Helper methods for node modification (Internal - Defined Before Use) ---
-
-  /// Creates a new content array with data payload at logical [dataIndex]
-  /// replaced by [newNode].
-  List<Object?> _replaceDataWithNode(
-    int dataIndex,
-    ChampNode<K, V> newNode,
-    int bitpos,
-  ) {
-    final oldDataLen = dataArity * 2;
-    final oldNodeLen = nodeArity;
-    final newDataLen = oldDataLen - 2; // Removing key/value
-    final newNodeLen = oldNodeLen + 1; // Adding node pointer
-    final newContent = List<Object?>.filled(newDataLen + newNodeLen, null);
-
-    // Calculate the actual array index for the data to remove
-    final payloadIndexToRemove = dataIndex * 2;
-    // Calculate the logical node index where the new node should be inserted
-    // This depends on the bit position corresponding to the removed data.
-    // Calculate the logical node index where the new node should be inserted
-    // based on the count of set bits in nodeMap *before* the bitpos.
-    final nodeIndexToInsert = bitCount(nodeMap & (bitpos - 1));
-    final nodeArrayIndexToInsert = newDataLen + nodeIndexToInsert;
-
-    // 1. Copy data elements before the removal index
-    List.copyRange(newContent, 0, content, 0, payloadIndexToRemove);
-
-    // 2. Copy data elements after the removal index (shifting left by 2)
-    List.copyRange(
-      newContent,
-      payloadIndexToRemove,
-      content,
-      payloadIndexToRemove + 2,
-      oldDataLen,
-    );
-
-    // 3. Copy node elements before the insertion index
-    List.copyRange(
-      newContent,
-      newDataLen,
-      content,
-      oldDataLen,
-      oldDataLen + nodeIndexToInsert,
-    );
-
-    // 4. Insert the new node pointer
-    newContent[nodeArrayIndexToInsert] = newNode;
-
-    // 5. Copy node elements after the insertion index (shifting right by 1)
-    List.copyRange(
-      newContent,
-      nodeArrayIndexToInsert + 1,
-      content,
-      oldDataLen + nodeIndexToInsert,
-      oldDataLen + oldNodeLen,
-    );
-
-    // Note: The array copying logic seems correct given the calculated indices.
-    // The previous warning was due to the placeholder index calculation.
-    return newContent;
-    // return newContent;
-  }
-
-  /// Creates a new content array with [key]/[value] inserted at the logical [dataIndex].
-  List<Object?> _insertData(int dataIndex, K key, V value) {
-    final oldDataLen = dataArity * 2;
-    final oldNodeLen = nodeArity;
-    final newDataLen = oldDataLen + 2;
-    final newContent = List<Object?>.filled(newDataLen + oldNodeLen, null);
-
-    // 1. Copy data elements before the insertion index
-    final payloadIndex = dataIndex * 2;
-    List.copyRange(newContent, 0, content, 0, payloadIndex);
-
-    // 2. Insert the new key-value pair
-    newContent[payloadIndex] = key;
-    newContent[payloadIndex + 1] = value;
-
-    // 3. Copy data elements after the insertion index
-    List.copyRange(
-      newContent,
-      payloadIndex + 2,
-      content,
-      payloadIndex,
-      oldDataLen,
-    );
-
-    // 4. Copy all node elements (shifting them by 2 positions)
-    List.copyRange(
-      newContent,
-      newDataLen,
-      content,
-      oldDataLen,
-      oldDataLen + oldNodeLen,
-    );
-
-    return newContent;
-  }
-
-  /// Creates a sub-node when two entries collide at the current level.
-  ChampNode<K, V> _createSubNode(
-    MapEntry<K, V> entry1,
-    int hash1,
-    MapEntry<K, V> entry2,
-    int hash2,
-    int shift,
-  ) {
-    if (shift >= _kHashBits) {
-      // Max depth reached, create collision node
-      return ChampCollisionNode<K, V>(hash1, [entry1, entry2]);
-    }
-
-    final mask1 = 1 << ((hash1 >> shift) & (kBranchingFactor - 1));
-    final mask2 = 1 << ((hash2 >> shift) & (kBranchingFactor - 1));
-
-    if (mask1 == mask2) {
-      // Still colliding at this level, recurse
-      final subNode = _createSubNode(
-        entry1,
-        hash1,
-        entry2,
-        hash2,
-        shift + _kBitPartitionSize,
-      );
-      // Node map has the bit set, data map is 0
-      return ChampInternalNode<K, V>(0, mask1, [subNode]);
-    } else {
-      // Can differentiate at this level
-      // Data map has both bits set, node map is 0
-      // Ensure order for consistent structure if needed (e.g., based on mask value)
-      if (mask1 < mask2) {
-        return ChampInternalNode<K, V>(mask1 | mask2, 0, [
-          entry1.key,
-          entry1.value,
-          entry2.key,
-          entry2.value,
-        ]);
-      } else {
-        return ChampInternalNode<K, V>(mask1 | mask2, 0, [
-          entry2.key,
-          entry2.value,
-          entry1.key,
-          entry1.value,
-        ]);
-      }
-    }
-  }
-
-  List<Object?> _removeData(int dataIndex) {
-    final oldDataLen = dataArity * 2;
-    final oldNodeLen = nodeArity;
-    final newDataLen = oldDataLen - 2;
-    final newContent = List<Object?>.filled(newDataLen + oldNodeLen, null);
-
-    // 1. Copy data elements before the removal index
-    final payloadIndex = dataIndex * 2;
-    List.copyRange(newContent, 0, content, 0, payloadIndex);
-
-    // 2. Copy data elements after the removal index (shifting left by 2)
-    List.copyRange(
-      newContent,
-      payloadIndex,
-      content,
-      payloadIndex + 2,
-      oldDataLen,
-    );
-
-    // 3. Copy all node elements (shifting left by 2)
-    List.copyRange(
-      newContent,
-      newDataLen,
-      content,
-      oldDataLen,
-      oldDataLen + oldNodeLen,
-    );
-
-    return newContent;
-  }
-
-  List<Object?> _removeNode(int nodeLocalIndex) {
-    final oldDataLen = dataArity * 2;
-    final oldNodeLen = nodeArity;
-    final newNodeLen = oldNodeLen - 1;
-    final newContent = List<Object?>.filled(oldDataLen + newNodeLen, null);
-
-    // Calculate the actual array index for the node to remove (from the end)
-    // nodeLocalIndex is the index within the conceptual node array (0 to nodeArity-1)
-    // The actual index in the content array is calculated from the end.
-    final nodeIndexToRemove =
-        oldDataLen + nodeLocalIndex; // Index relative to start of node section
-    // which is at oldDataLen
-
-    // 1. Copy all data elements
-    List.copyRange(newContent, 0, content, 0, oldDataLen);
-
-    // 2. Copy node elements before the removal index
-    List.copyRange(
-      newContent,
-      oldDataLen,
-      content,
-      oldDataLen,
-      nodeIndexToRemove,
-    );
-
-    // 3. Copy node elements after the removal index (shifting left by 1)
-    List.copyRange(
-      newContent,
-      nodeIndexToRemove,
-      content,
-      nodeIndexToRemove + 1,
-      oldDataLen + oldNodeLen,
-    );
-
-    return newContent;
-  }
-
-  List<Object?> _replaceNodeWithData(
-    int nodeLocalIndex,
-    K key,
-    V value,
-    int bitpos,
-  ) {
-    final oldDataLen = dataArity * 2;
-    final oldNodeLen = nodeArity;
-    final newDataLen = oldDataLen + 2; // Adding key/value
-    final newNodeLen = oldNodeLen - 1; // Removing node pointer
-    final newContent = List<Object?>.filled(newDataLen + newNodeLen, null);
-
-    // Calculate the actual array index for the node to remove
-    final nodeIndexToRemove = oldDataLen + nodeLocalIndex;
-
-    // Calculate the logical data index where the new key/value should be inserted
-    // This depends on the bit position corresponding to the removed node.
-    // We need the original bitpos that led to this nodeLocalIndex.
-    // This requires more context than available in this helper alone.
-    // Calculate the logical data index where the new key/value should be inserted
-    // based on the count of set bits in dataMap *before* the bitpos.
-    final dataIndexToInsert = bitCount(dataMap & (bitpos - 1));
-    final payloadIndexToInsert = dataIndexToInsert * 2;
-
-    // 1. Copy data elements before the insertion point
-    List.copyRange(newContent, 0, content, 0, payloadIndexToInsert);
-
-    // 2. Insert the new key-value pair
-    newContent[payloadIndexToInsert] = key;
-    newContent[payloadIndexToInsert + 1] = value;
-
-    // 3. Copy data elements after the insertion point
-    List.copyRange(
-      newContent,
-      payloadIndexToInsert + 2,
-      content,
-      payloadIndexToInsert,
-      oldDataLen,
-    );
-
-    // 4. Copy node elements before the removal index
-    List.copyRange(
-      newContent,
-      newDataLen,
-      content,
-      oldDataLen,
-      nodeIndexToRemove,
-    );
-
-    // 5. Copy node elements after the removal index (shifting left by 1)
-    List.copyRange(
-      newContent,
-      newDataLen +
-          nodeLocalIndex, // Start index in new array (after inserted data + previous nodes)
-      content, // Source array
-      nodeIndexToRemove +
-          1, // Start index in old array (after the removed node)
-      oldDataLen + oldNodeLen, // End index in old array
-    );
-
-    // Note: The array copying logic seems correct given the calculated indices.
-    // The previous warning was due to the placeholder index calculation.
-    return newContent;
-    // return newContent;
-  }
-
-  // --- Public API Methods ---
-
-  @override
-  V? get(K key, int hash, int shift) {
-    final mask = 1 << ((hash >> shift) & (kBranchingFactor - 1));
-
-    if ((dataMap & mask) != 0) {
-      // Potential data payload match
-      final index = bitCount(dataMap & (mask - 1));
-      // Assuming keys/values are stored alternatingly for maps
-      final payloadIndex = index * 2;
-      if (payloadIndex >= content.length) return null; // Bounds check
-      final currentKey = content[payloadIndex] as K;
-      if (key == currentKey) {
-        return content[payloadIndex + 1] as V;
-      }
-      return null; // Key mismatch
-    }
-
-    if ((nodeMap & mask) != 0) {
-      // Potential match in sub-node
-      final index = bitCount(nodeMap & (mask - 1));
-      final nodeIndex = content.length - 1 - index; // Nodes stored from the end
-      if (nodeIndex < 0 || nodeIndex >= content.length) {
-        return null; // Bounds check
-      }
-      final childNode = content[nodeIndex] as ChampNode<K, V>;
-      return childNode.get(key, hash, shift + _kBitPartitionSize);
-    }
-
-    // Key not found in this node
-    return null;
-  }
-
-  @override
-  ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
-    final mask = 1 << ((hash >> shift) & (kBranchingFactor - 1));
-    final bitpos = mask; // Use mask as bitpos for clarity
-
-    if ((dataMap & bitpos) != 0) {
-      // Slot contains a data payload
-      final dataIndex = bitCount(dataMap & (bitpos - 1));
-      final payloadIndex = dataIndex * 2;
-      final currentKey = content[payloadIndex] as K;
-
-      if (key == currentKey) {
-        // Key match: Update value if different
-        final currentValue = content[payloadIndex + 1] as V;
-        if (identical(currentValue, value) || currentValue == value) {
-          return ChampAddResult(this, false); // Value is the same, no change
-        }
-        // Create new node with updated value
-        final newContent = List<Object?>.of(content);
-        newContent[payloadIndex + 1] = value;
-        return ChampAddResult(
-          ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
-          false, // Update, not add
-        );
-      } else {
-        // Key mismatch: Collision or path expansion needed
-        final currentVal = content[payloadIndex + 1] as V;
-        final currentEntry = MapEntry(currentKey, currentVal);
-        final newEntry = MapEntry(key, value);
-
-        // Need hash of existing key to proceed
-        final currentHash = currentKey.hashCode; // Assuming standard hashCode
-
-        // TODO: Handle hash collision edge cases more robustly if needed
-        final ChampNode<K, V> subNode;
-        if (currentHash == hash) {
-          // Full hash collision: Create CollisionNode
-          subNode = ChampCollisionNode<K, V>(hash, [currentEntry, newEntry]);
-        } else {
-          // Hashes differ: Expand path
-          subNode = _createSubNode(
-            currentEntry,
-            currentHash,
-            newEntry,
-            hash,
-            shift + _kBitPartitionSize,
-          );
-        }
-        // Replace data with the new sub-node
-        // Replace data entry with the new sub-node
-        final newContent = _replaceDataWithNode(dataIndex, subNode, bitpos);
-        return ChampAddResult(
-          ChampInternalNode<K, V>(
-            dataMap ^ bitpos, // Remove data bit
-            nodeMap | bitpos, // Add node bit
-            newContent,
-          ),
-          true, // Added a new entry (by creating a sub-node)
-        );
-      }
-    } else if ((nodeMap & bitpos) != 0) {
-      // Slot contains a sub-node
-      final nodeLocalIndex = bitCount(nodeMap & (bitpos - 1));
-      final nodeIndex = content.length - 1 - nodeLocalIndex; // Index from end
-      final subNode = content[nodeIndex] as ChampNode<K, V>;
-      final addResult = subNode.add(
-        key,
-        value,
-        hash,
-        shift + _kBitPartitionSize,
-      );
-
-      if (identical(subNode, addResult.node)) {
-        return ChampAddResult(this, false); // Sub-node didn't change
-      }
-
-      // Create new node with updated sub-node
-      final newContent = List<Object?>.of(content);
-      newContent[nodeIndex] = addResult.node;
-      return ChampAddResult(
-        ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
-        addResult.didAdd, // Propagate didAdd from sub-operation
-      );
-    } else {
-      // Slot is empty: Insert new data payload
-      final dataIndex = bitCount(dataMap & (bitpos - 1));
-      // Use the helper to create the new content array
-      final newContent = _insertData(dataIndex, key, value);
-      return ChampAddResult(
-        ChampInternalNode<K, V>(dataMap | bitpos, nodeMap, newContent),
-        true, // Added a new entry
-      );
-    }
-  }
-
-  @override
-  ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
-    final mask = 1 << ((hash >> shift) & (kBranchingFactor - 1));
-    final bitpos = mask;
-
-    if ((dataMap & bitpos) != 0) {
-      // Potential data payload match
-      final dataIndex = bitCount(dataMap & (bitpos - 1));
-      final payloadIndex = dataIndex * 2;
-      final currentKey = content[payloadIndex] as K;
-
-      if (key == currentKey) {
-        // Key match: Remove this entry
-        final newDataMap = dataMap ^ bitpos;
-        if (arity == 1) {
-          // This was the only entry, node becomes empty
-          return ChampRemoveResult(ChampEmptyNode.instance<K, V>(), true);
-        }
-        // Use the helper to create the new content array after removal
-        final newContent = _removeData(dataIndex);
-        return ChampRemoveResult(
-          ChampInternalNode<K, V>(newDataMap, nodeMap, newContent),
-          true, // Removed an entry
-        );
-      }
-      // Key mismatch, not found here
-      return ChampRemoveResult(this, false);
-    }
-
-    if ((nodeMap & bitpos) != 0) {
-      // Potential match in sub-node
-      final nodeLocalIndex = bitCount(nodeMap & (bitpos - 1));
-      final nodeIndex = content.length - 1 - nodeLocalIndex; // Index from end
-      final childNode = content[nodeIndex] as ChampNode<K, V>;
-      final removeResult = childNode.remove(
-        key,
-        hash,
-        shift + _kBitPartitionSize,
-      );
-
-      if (!removeResult.didRemove) {
-        // Removal didn't happen below, or node didn't change
-        return ChampRemoveResult(this, false);
-      }
-
-      final newChildNode = removeResult.node;
-
-      // Canonicalization check after removal below
-      if (newChildNode is ChampInternalNode<K, V> &&
-          newChildNode.arity == 1 &&
-          newChildNode.nodeArity == 0) {
-        // Child collapsed to a single data entry, inline it
-        final singleKey = newChildNode.content[0] as K;
-        final singleValue = newChildNode.content[1] as V;
-        // Replace the child node pointer with the inlined data entry
-        final newContent = _replaceNodeWithData(
-          nodeLocalIndex,
-          singleKey,
-          singleValue,
-          bitpos, // Pass the bitpos for correct index calculation
-        );
-        return ChampRemoveResult(
-          ChampInternalNode<K, V>(
-            dataMap | bitpos, // Add data bit
-            nodeMap ^ bitpos, // Remove node bit
-            newContent,
-          ),
-          true, // Removal occurred
-        );
-      } else if (newChildNode.isEmptyNode) {
-        // Child became empty, remove the node pointer
-        final newNodeMap = nodeMap ^ bitpos;
-        if (arity == 1) {
-          // This node becomes empty
-          return ChampRemoveResult(ChampEmptyNode.instance<K, V>(), true);
-        }
-        // Use the helper to create the new content array after removing the node pointer
-        final newContent = _removeNode(nodeLocalIndex);
-        return ChampRemoveResult(
-          ChampInternalNode<K, V>(dataMap, newNodeMap, newContent),
-          true, // Removal occurred
-        );
-      } else {
-        // Child changed but didn't collapse/empty, just update pointer
-        final newContent = List<Object?>.of(content);
-        newContent[nodeIndex] = newChildNode;
-        return ChampRemoveResult(
-          ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
-          true, // Removal occurred
-        );
-      }
-    }
-
-    // Key not found in this node or any sub-node
-    return ChampRemoveResult(this, false);
-  }
-}
-
-/// Represents a node containing entries that have the same full hash code
-/// or whose hash codes collide completely up to the maximum trie depth.
-class ChampCollisionNode<K, V> extends ChampNode<K, V> {
-  /// The hash code shared by all entries in this node.
-  final int hash;
-
-  /// List storing the actual key-value pairs that collided.
-  /// For a Set, V would typically be a placeholder type or the key itself.
-  final List<MapEntry<K, V>> entries;
-
-  ChampCollisionNode(this.hash, this.entries)
-    : assert(
-        entries.length >= 2,
-      ); // Must have at least 2 entries to be a collision
-
-  @override
-  int get arity => entries.length;
-
-  @override
-  bool get isEmpty => entries.isEmpty; // Collision node is empty if list is empty
-
-  @override
-  V? get(K key, int hash, int shift) {
-    // In a collision node, we ignore hash/shift and just check the list
-    for (final entry in entries) {
-      if (key == entry.key) {
-        return entry.value;
-      }
-    }
-    return null; // Key not found in collision list
-  }
-
-  @override
-  ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
-    // Check if key already exists
-    int existingIndex = -1;
-    for (int i = 0; i < entries.length; i++) {
-      if (key == entries[i].key) {
-        existingIndex = i;
-        break;
-      }
-    }
-
-    if (existingIndex != -1) {
-      // Key exists, update value if different
-      final currentEntry = entries[existingIndex];
-      if (identical(currentEntry.value, value) || currentEntry.value == value) {
-        return ChampAddResult(this, false); // Value is the same
-      }
-      final newEntries = List<MapEntry<K, V>>.of(entries);
-      newEntries[existingIndex] = MapEntry(key, value);
-      return ChampAddResult(
-        ChampCollisionNode<K, V>(hash, newEntries),
-        false, // Update, not add
-      );
-    } else {
-      // Key doesn't exist, add new entry
-      final newEntries = List<MapEntry<K, V>>.of(entries)
-        ..add(MapEntry(key, value));
-      // If only one entry remains after potential prior deletions,
-      // it should ideally be inlined back into a parent node,
-      // but that logic belongs in the InternalNode's deletion handling.
-      // Here, we just return a new collision node with the added entry.
-      return ChampAddResult(
-        ChampCollisionNode<K, V>(hash, newEntries),
-        true, // Added a new entry
-      );
-    }
-  }
-
-  @override
-  ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
-    int removalIndex = -1;
-    for (int i = 0; i < entries.length; i++) {
-      if (key == entries[i].key) {
-        removalIndex = i;
-        break;
-      }
-    }
-
-    if (removalIndex == -1) {
-      return ChampRemoveResult(this, false); // Key not found
-    }
-
-    // Key found, removal will occur
-    if (entries.length == 2) {
-      // Removing one entry leaves only one - return the single entry node
-      // to be inlined by the caller (InternalNode).
-      final remainingEntry = entries[1 - removalIndex]; // Get the other entry
-
-      // Create a new InternalNode containing only this single entry.
-      // The parent InternalNode's remove logic will handle inlining this.
-      final remainingHash =
-          remainingEntry.key.hashCode; // Assuming standard hashCode
-
-      // We need the hash fragment relative to the *parent's* level (shift - partitionSize)
-      // to correctly place it in the new InternalNode's bitmap.
-      // This logic might be slightly off if the collision node was created at max depth.
-      // However, the parent node should handle the context.
-      final parentShift = shift - _kBitPartitionSize;
-      final effectiveShift =
-          parentShift < 0 ? 0 : parentShift; // Avoid negative shift
-      final bitpos =
-          1 << ((remainingHash >> effectiveShift) & (kBranchingFactor - 1));
-
-      // Data map has the bit set, node map is 0
-      final singleEntryNode = ChampInternalNode<K, V>(bitpos, 0, [
-        remainingEntry.key,
-        remainingEntry.value,
-      ]);
-      return ChampRemoveResult(singleEntryNode, true);
-    } else {
-      // More than 2 entries, just remove from list
-      final newEntries = List<MapEntry<K, V>>.of(entries)
-        ..removeAt(removalIndex);
-      return ChampRemoveResult(
-        ChampCollisionNode<K, V>(hash, newEntries),
-        true, // Removed an entry
-      );
-    }
-  }
-}
-
-// Helper for bit counting (consider adding as extension or utility)
-class Integer {
-  static int bitCount(int n) {
-    // Efficient bit count implementation (e.g., from Dart SDK internals or standard algorithms)
-    n = n - ((n >> 1) & 0x55555555);
-    n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
-    return (((n + (n >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
-  }
-}
-
-// TODO: Define a shared empty node instance (likely an InternalNode with 0 maps/content).
-/// Represents the canonical empty CHAMP Trie node.
+/// Represents an empty CHAMP Trie node.
 class ChampEmptyNode<K, V> extends ChampNode<K, V> {
-  static final ChampEmptyNode _instance = ChampEmptyNode._();
+  // No static instance needed anymore, create on demand.
 
-  /// Singleton instance of the empty node.
-  static ChampEmptyNode<K, V> instance<K, V>() =>
-      _instance as ChampEmptyNode<K, V>;
-
-  const ChampEmptyNode._();
-
-  @override
-  int get arity => 0;
-
-  @override
-  bool get isEmpty => true;
-
-  @override
-  bool get isEmptyNode => true;
+  const ChampEmptyNode(); // Public const constructor
 
   @override
   V? get(K key, int hash, int shift) => null;
 
   @override
   ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
-    // Adding to empty creates a new InternalNode with a single data entry.
-    final bitpos = 1 << ((hash >> shift) & (kBranchingFactor - 1));
-    final newNode = ChampInternalNode<K, V>(bitpos, 0, [key, value]);
-    return ChampAddResult(newNode, true); // Added a new entry
+    // Adding to empty creates a new data node.
+    final newNode = ChampDataNode<K, V>(hash, key, value);
+    return (node: newNode, didAdd: true);
   }
 
   @override
   ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
-    // Removing from empty returns empty and signals no removal occurred.
-    return ChampRemoveResult(this, false);
+    // Removing from empty does nothing.
+    return (node: this, didRemove: false);
+  }
+
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+  }) {
+    if (ifAbsentFn != null) {
+      // Key doesn't exist, insert if ifAbsentFn is provided
+      final newValue = ifAbsentFn();
+      final newNode = ChampDataNode<K, V>(hash, key, newValue);
+      return (node: newNode, sizeChanged: true);
+    } else {
+      // Key doesn't exist, no ifAbsentFn, return empty node, no size change
+      return (node: this, sizeChanged: false);
+    }
+  }
+
+  @override
+  bool get isEmptyNode => true;
+}
+
+/// Represents a node containing a single key-value pair.
+/// Used when a hash collision occurs but keys are different, or as leaf nodes initially.
+class ChampDataNode<K, V> extends ChampNode<K, V> {
+  final int hash; // Full hash code of the key
+  final K key;
+  final V value;
+
+  const ChampDataNode(this.hash, this.key, this.value);
+
+  @override
+  V? get(K key, int hash, int shift) {
+    return (this.hash == hash && this.key == key) ? value : null;
+  }
+
+  @override
+  ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
+    if (key == this.key) {
+      // Update existing key if value is different
+      if (value == this.value) {
+        return (node: this, didAdd: false); // No change
+      }
+      return (
+        node: ChampDataNode(hash, key, value),
+        didAdd: false,
+      ); // Updated value
+    }
+
+    // Collision: create an internal node or collision node
+    final newNode = mergeDataEntries(
+      shift,
+      this.hash,
+      this.key,
+      this.value,
+      hash,
+      key,
+      value,
+    );
+    return (node: newNode, didAdd: true); // Added a new distinct entry
+  }
+
+  @override
+  ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
+    if (this.hash == hash && this.key == key) {
+      // Found the key, remove it by returning the empty node.
+      // Found the key, remove it by returning a new empty node.
+      return (
+        node: ChampEmptyNode<K, V>(),
+        didRemove: true,
+      ); // Cannot be const here
+    }
+    // Key not found.
+    return (node: this, didRemove: false);
+  }
+
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+  }) {
+    if (key == this.key) {
+      // Key found, apply updateFn
+      final updatedValue = updateFn(value);
+      // If value is identical, return original node
+      if (identical(updatedValue, value)) {
+        return (node: this, sizeChanged: false);
+      }
+      // Return new data node with updated value
+      return (
+        node: ChampDataNode(this.hash, this.key, updatedValue),
+        sizeChanged: false,
+      );
+    } else {
+      // Key not found at this node (hash collision occurred earlier or different key)
+      if (ifAbsentFn != null) {
+        // Treat as adding a new key which causes a collision at this level
+        final newValue = ifAbsentFn();
+        // Need to decide if collision node or internal node is appropriate here
+        // Let's use mergeDataEntries which handles this logic
+        final newNode = mergeDataEntries(
+          shift, // Use current shift level for merging decision
+          this.hash,
+          this.key,
+          this.value,
+          hash,
+          key,
+          newValue,
+        );
+        return (node: newNode, sizeChanged: true);
+      } else {
+        // Key not found, no ifAbsentFn, return original node
+        return (node: this, sizeChanged: false);
+      }
+    }
   }
 }
 
-// TODO: Implement factory constructors or static methods for creating nodes.
-// TODO: Implement the helper methods (_replaceDataWithNode, _insertData, _removeData, _removeNode)
+/// Represents a node containing multiple entries that have the same hash fragment
+/// up to a certain level, but different full hash codes or different keys.
+class ChampCollisionNode<K, V> extends ChampNode<K, V> {
+  final int hash; // The hash code common to all entries in this node
+  final List<MapEntry<K, V>> entries;
+
+  const ChampCollisionNode(this.hash, this.entries)
+    : assert(entries.length >= 2);
+
+  @override
+  V? get(K key, int hash, int shift) {
+    if (this.hash != hash) return null; // Hash must match
+    for (final entry in entries) {
+      if (entry.key == key) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  @override
+  ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
+    assert(hash == this.hash); // Hash must match
+
+    for (int i = 0; i < entries.length; i++) {
+      if (entries[i].key == key) {
+        // Key exists, update value if different
+        if (entries[i].value == value) {
+          return (node: this, didAdd: false); // No change
+        }
+        final newEntries = List<MapEntry<K, V>>.of(entries);
+        newEntries[i] = MapEntry(key, value);
+        return (
+          node: ChampCollisionNode(hash, newEntries),
+          didAdd: false,
+        ); // Updated
+      }
+    }
+
+    // Key doesn't exist, add new entry
+    final newEntries = [...entries, MapEntry(key, value)];
+    return (node: ChampCollisionNode(hash, newEntries), didAdd: true); // Added
+  }
+
+  @override
+  ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
+    assert(hash == this.hash); // Hash must match
+
+    int foundIndex = -1;
+    for (int i = 0; i < entries.length; i++) {
+      if (entries[i].key == key) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    if (foundIndex == -1) {
+      return (node: this, didRemove: false); // Key not found
+    }
+
+    if (entries.length == 2) {
+      // Removing one leaves only one entry, convert back to DataNode
+      final remainingEntry = entries[1 - foundIndex]; // Get the other entry
+      final newNode = ChampDataNode<K, V>(
+        hash, // Hash is the same
+        remainingEntry.key,
+        remainingEntry.value,
+      );
+      return (node: newNode, didRemove: true);
+    } else {
+      // More than 2 entries remain, create a new CollisionNode
+      final newEntries = List<MapEntry<K, V>>.of(entries);
+      newEntries.removeAt(foundIndex);
+      final newNode = ChampCollisionNode<K, V>(hash, newEntries);
+      return (node: newNode, didRemove: true);
+    }
+  }
+
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+  }) {
+    assert(hash == this.hash); // Hash must match for collision node
+
+    int foundIndex = -1;
+    V? oldValue;
+    for (int i = 0; i < entries.length; i++) {
+      if (entries[i].key == key) {
+        foundIndex = i;
+        oldValue = entries[i].value;
+        break;
+      }
+    }
+
+    if (foundIndex != -1) {
+      // Key found, apply updateFn
+      final updatedValue = updateFn(oldValue!);
+      if (identical(updatedValue, oldValue)) {
+        return (node: this, sizeChanged: false); // Value didn't change
+      }
+      // Create new list with updated entry
+      final newEntries = List<MapEntry<K, V>>.of(entries);
+      newEntries[foundIndex] = MapEntry(key, updatedValue);
+      return (
+        node: ChampCollisionNode(this.hash, newEntries),
+        sizeChanged: false,
+      );
+    } else {
+      // Key not found in collision list
+      if (ifAbsentFn != null) {
+        // Add new entry using ifAbsentFn
+        final newValue = ifAbsentFn();
+        final newEntries = [...entries, MapEntry(key, newValue)];
+        return (
+          node: ChampCollisionNode(this.hash, newEntries),
+          sizeChanged: true,
+        );
+      } else {
+        // Key not found, no ifAbsentFn, return original node
+        return (node: this, sizeChanged: false);
+      }
+    }
+  }
+}
+
+/// Represents an internal node containing references to sub-nodes and/or data entries.
+class ChampInternalNode<K, V> extends ChampNode<K, V> {
+  /// Bitmap indicating the presence of data entries.
+  final int dataMap;
+
+  /// Bitmap indicating the presence of sub-nodes.
+  final int nodeMap;
+
+  /// Array storing data entries (key, value pairs) and sub-nodes.
+  /// Data entries are stored first, followed by sub-nodes.
+  /// Data: [k1, v1, k2, v2, ...]
+  /// Nodes: [..., nodeA, nodeB, ...]
+  final List<Object?> content;
+
+  const ChampInternalNode(this.dataMap, this.nodeMap, this.content);
+
+  // --- Helper methods for index calculation ---
+
+  int dataIndexFromFragment(int frag) => bitCount(dataMap & ((1 << frag) - 1));
+  int nodeIndexFromFragment(int frag) => bitCount(nodeMap & ((1 << frag) - 1));
+  int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
+  int contentIndexFromNodeIndex(int nodeIndex) =>
+      (bitCount(dataMap) * 2) + nodeIndex;
+
+  // --- Core Methods ---
+
+  @override
+  V? get(K key, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      // Check data entries first
+      final dataIndex = dataIndexFromFragment(frag);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      // Check if the key matches
+      if (content[payloadIndex] == key) {
+        return content[payloadIndex + 1] as V;
+      }
+      return null; // Hash fragment collision, but different key
+    } else if ((nodeMap & bitpos) != 0) {
+      // Check sub-nodes
+      final nodeIndex = nodeIndexFromFragment(frag);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final subNode = content[contentIdx] as ChampNode<K, V>;
+      // Recursively search in the sub-node
+      return subNode.get(key, hash, shift + kBitPartitionSize);
+    }
+
+    return null; // Not found in this branch
+  }
+
+  @override
+  ChampAddResult<K, V> add(K key, V value, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      // Collision with existing data entry
+      final dataIndex = dataIndexFromFragment(frag);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      final currentKey = content[payloadIndex] as K;
+      final currentValue = content[payloadIndex + 1] as V;
+
+      if (currentKey == key) {
+        // Update existing key
+        if (currentValue == value)
+          return (node: this, didAdd: false); // No change
+        final newContent = List<Object?>.of(content);
+        newContent[payloadIndex + 1] = value;
+        return (
+          node: ChampInternalNode(dataMap, nodeMap, newContent),
+          didAdd: false,
+        );
+      } else {
+        // Hash collision, different keys
+        final subNode = mergeDataEntries(
+          shift + kBitPartitionSize,
+          this.hashOfKey(currentKey),
+          currentKey,
+          currentValue,
+          hash,
+          key,
+          value,
+        );
+        // Replace data entry with the new sub-node
+        final newDataMap = dataMap ^ bitpos; // Remove data bit
+        final newNodeMap = nodeMap | bitpos; // Add node bit
+        final newContent = replaceDataWithNode(dataIndex, subNode);
+        return (
+          node: ChampInternalNode(newDataMap, newNodeMap, newContent),
+          didAdd: true,
+        );
+      }
+    } else if ((nodeMap & bitpos) != 0) {
+      // Delegate to existing sub-node
+      final nodeIndex = nodeIndexFromFragment(frag);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final subNode = content[contentIdx] as ChampNode<K, V>;
+      final addResult = subNode.add(
+        key,
+        value,
+        hash,
+        shift + kBitPartitionSize,
+      );
+
+      if (identical(addResult.node, subNode))
+        return (node: this, didAdd: false); // No change below
+
+      final newContent = List<Object?>.of(content);
+      newContent[contentIdx] = addResult.node;
+      return (
+        node: ChampInternalNode(dataMap, nodeMap, newContent),
+        didAdd: addResult.didAdd,
+      );
+    } else {
+      // Empty slot, insert new data entry
+      final dataIndex = dataIndexFromFragment(frag);
+      final newDataMap = dataMap | bitpos;
+      final newContent = insertDataEntry(dataIndex, key, value);
+      return (
+        node: ChampInternalNode(newDataMap, nodeMap, newContent),
+        didAdd: true,
+      );
+    }
+  }
+
+  @override
+  ChampRemoveResult<K, V> remove(K key, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      // Check data entries
+      final dataIndex = dataIndexFromFragment(frag);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      if (content[payloadIndex] == key) {
+        // Found the key to remove
+        final newDataMap = dataMap ^ bitpos; // Remove data bit
+        final newContent = removeDataEntry(dataIndex);
+
+        // Check if node needs shrinking/collapsing
+        if (nodeMap == 0 && bitCount(newDataMap) == 1) {
+          // Only one data entry left, collapse to DataNode
+          final lastDataIndex = bitCount(
+            newDataMap & (bitpos - 1),
+          ); // Find index of remaining entry
+          final lastPayloadIndex = lastDataIndex * 2;
+          final lastKey = newContent[lastPayloadIndex] as K;
+          final lastValue = newContent[lastPayloadIndex + 1] as V;
+          // Need the hash of the remaining key
+          final lastHash = hashOfKey(lastKey); // Assume hashOfKey exists
+          return (
+            node: ChampDataNode(lastHash, lastKey, lastValue),
+            didRemove: true,
+          );
+        }
+
+        return (
+          node: ChampInternalNode(newDataMap, nodeMap, newContent),
+          didRemove: true,
+        );
+      }
+      return (
+        node: this,
+        didRemove: false,
+      ); // Hash fragment collision, but different key
+    } else if ((nodeMap & bitpos) != 0) {
+      // Check sub-nodes
+      final nodeIndex = nodeIndexFromFragment(frag);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final subNode = content[contentIdx] as ChampNode<K, V>;
+      final removeResult = subNode.remove(key, hash, shift + kBitPartitionSize);
+
+      if (identical(removeResult.node, subNode)) {
+        return (node: this, didRemove: false); // Not found in sub-tree
+      }
+
+      final newNode = removeResult.node;
+
+      // Check if the sub-node became empty or needs collapsing
+      if (newNode.isEmptyNode) {
+        // Remove the sub-node entry entirely
+        final newNodeMap = nodeMap ^ bitpos; // Remove node bit
+        final newContent = removeNodeEntry(nodeIndex);
+
+        // If only one data entry remains, collapse to DataNode
+        if (newNodeMap == 0 && bitCount(dataMap) == 1) {
+          final lastDataIndex = 0; // Only one data entry left
+          final lastPayloadIndex = lastDataIndex * 2;
+          final lastKey = newContent[lastPayloadIndex] as K;
+          final lastValue = newContent[lastPayloadIndex + 1] as V;
+          final lastHash = hashOfKey(lastKey);
+          return (
+            node: ChampDataNode(lastHash, lastKey, lastValue),
+            didRemove: true,
+          );
+        }
+        return (
+          node: ChampInternalNode(dataMap, newNodeMap, newContent),
+          didRemove: true,
+        );
+      } else if (newNode is ChampDataNode<K, V>) {
+        // Sub-node collapsed into a DataNode, replace node entry with data entry
+        final newNodeMap = nodeMap ^ bitpos; // Remove node bit
+        final newDataMap = dataMap | bitpos; // Add data bit
+        final newContent = replaceNodeWithData(
+          nodeIndex,
+          newNode.key,
+          newNode.value,
+        );
+        return (
+          node: ChampInternalNode(newDataMap, newNodeMap, newContent),
+          didRemove: true,
+        );
+      } else {
+        // Sub-node changed but didn't collapse/empty
+        final newContent = List<Object?>.of(content);
+        newContent[contentIdx] = newNode;
+        return (
+          node: ChampInternalNode(dataMap, nodeMap, newContent),
+          didRemove: true,
+        );
+      }
+    }
+
+    return (node: this, didRemove: false); // Key not found in this branch
+  }
+
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+  }) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      // Check data entries
+      final dataIndex = dataIndexFromFragment(frag);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      final currentKey = content[payloadIndex] as K;
+
+      if (currentKey == key) {
+        // Key found in data payload
+        final currentValue = content[payloadIndex + 1] as V;
+        final updatedValue = updateFn(currentValue);
+        if (identical(updatedValue, currentValue)) {
+          return (node: this, sizeChanged: false); // Value didn't change
+        }
+        // Create new node with updated value in content array
+        final newContent = List<Object?>.of(content);
+        newContent[payloadIndex + 1] = updatedValue;
+        return (
+          node: ChampInternalNode(dataMap, nodeMap, newContent),
+          sizeChanged: false,
+        );
+      } else {
+        // Hash collision at this level, but keys differ
+        if (ifAbsentFn != null) {
+          // Convert existing data entry + new entry into a sub-node (collision or internal)
+          final newValue = ifAbsentFn();
+          final currentVal = content[payloadIndex + 1] as V;
+          final subNode = mergeDataEntries(
+            shift + kBitPartitionSize, // Use correct constant
+            this.hashOfKey(currentKey),
+            currentKey,
+            currentVal,
+            hash,
+            key,
+            newValue,
+          );
+          // Replace data entry with the new sub-node
+          final newDataMap = dataMap ^ bitpos; // Remove data bit
+          final newNodeMap = nodeMap | bitpos; // Add node bit
+          final newContent = replaceDataWithNode(dataIndex, subNode);
+          return (
+            node: ChampInternalNode(newDataMap, newNodeMap, newContent),
+            sizeChanged: true,
+          );
+        } else {
+          // Key not found, no ifAbsentFn
+          return (node: this, sizeChanged: false);
+        }
+      }
+    } else if ((nodeMap & bitpos) != 0) {
+      // Check sub-nodes
+      final nodeIndex = nodeIndexFromFragment(frag);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final subNode = content[contentIdx] as ChampNode<K, V>;
+
+      // Recursively update the sub-node
+      final updateResult = subNode.update(
+        key,
+        hash,
+        shift + kBitPartitionSize,
+        updateFn,
+        ifAbsentFn: ifAbsentFn, // Use correct constant
+      );
+
+      // If sub-node didn't change, return original node
+      if (identical(updateResult.node, subNode)) {
+        return (node: this, sizeChanged: false);
+      }
+
+      // Create new internal node with the updated sub-node
+      final newContent = List<Object?>.of(content);
+      newContent[contentIdx] = updateResult.node;
+      return (
+        node: ChampInternalNode(dataMap, nodeMap, newContent),
+        sizeChanged: updateResult.sizeChanged,
+      );
+    } else {
+      // Empty slot
+      if (ifAbsentFn != null) {
+        // Insert new data entry using ifAbsentFn
+        final newValue = ifAbsentFn();
+        final newDataMap = dataMap | bitpos; // Add data bit
+        final newContent = insertDataEntry(
+          dataIndexFromFragment(frag),
+          key,
+          newValue,
+        ); // Use correct constant
+        return (
+          node: ChampInternalNode(newDataMap, nodeMap, newContent),
+          sizeChanged: true,
+        );
+      } else {
+        // Key not found, no ifAbsentFn
+        return (node: this, sizeChanged: false);
+      }
+    }
+  }
+
+  // --- Helper methods for content manipulation ---
+
+  /// Creates a new content array by inserting a data entry.
+  List<Object?> insertDataEntry(int dataIndex, K key, V value) {
+    final dataPayloadIndex = dataIndex * 2;
+    final nodeStartIndex = bitCount(dataMap) * 2;
+    final newContent = List<Object?>.filled(content.length + 2, null);
+
+    // Copy elements before insertion point
+    List.copyRange(newContent, 0, content, 0, dataPayloadIndex);
+    // Insert new data entry
+    newContent[dataPayloadIndex] = key;
+    newContent[dataPayloadIndex + 1] = value;
+    // Copy elements after insertion point
+    List.copyRange(
+      newContent,
+      dataPayloadIndex + 2,
+      content,
+      dataPayloadIndex,
+      nodeStartIndex,
+    );
+    // Copy node entries
+    List.copyRange(
+      newContent,
+      nodeStartIndex + 2,
+      content,
+      nodeStartIndex,
+      content.length,
+    );
+
+    return newContent;
+  }
+
+  /// Creates a new content array by removing a data entry.
+  List<Object?> removeDataEntry(int dataIndex) {
+    final dataPayloadIndex = dataIndex * 2;
+    final nodeStartIndex = bitCount(dataMap) * 2; // Based on OLD dataMap
+    final newContent = List<Object?>.filled(content.length - 2, null);
+
+    // Copy elements before removal point
+    List.copyRange(newContent, 0, content, 0, dataPayloadIndex);
+    // Copy elements after removal point (data part)
+    List.copyRange(
+      newContent,
+      dataPayloadIndex,
+      content,
+      dataPayloadIndex + 2,
+      nodeStartIndex,
+    );
+    // Copy node entries (adjusting destination index)
+    List.copyRange(
+      newContent,
+      nodeStartIndex - 2,
+      content,
+      nodeStartIndex,
+      content.length,
+    );
+
+    return newContent;
+  }
+
+  /// Creates a new content array by removing a node entry.
+  List<Object?> removeNodeEntry(int nodeIndex) {
+    final dataEndIndex = bitCount(dataMap) * 2;
+    final contentNodeIndex = dataEndIndex + nodeIndex;
+    final newContent = List<Object?>.filled(content.length - 1, null);
+
+    // Copy data entries
+    List.copyRange(newContent, 0, content, 0, dataEndIndex);
+    // Copy node entries before removal point
+    List.copyRange(
+      newContent,
+      dataEndIndex,
+      content,
+      dataEndIndex,
+      contentNodeIndex,
+    );
+    // Copy node entries after removal point
+    List.copyRange(
+      newContent,
+      contentNodeIndex,
+      content,
+      contentNodeIndex + 1,
+      content.length,
+    );
+
+    return newContent;
+  }
+
+  /// Creates a new content array replacing a data entry with a sub-node.
+  List<Object?> replaceDataWithNode(int dataIndex, ChampNode<K, V> subNode) {
+    final dataPayloadIndex = dataIndex * 2;
+    final nodeStartIndex = bitCount(dataMap) * 2; // OLD dataMap count
+    final newNodeIndex = bitCount(
+      nodeMap,
+    ); // Index within the node section (NEW nodeMap)
+    final newContentNodeIndex =
+        (bitCount(dataMap) - 1) * 2 +
+        newNodeIndex; // Adjusted index in newContent
+
+    final newContent = List<Object?>.filled(
+      content.length - 1,
+      null,
+    ); // Size decreases by 1 (2 data -> 1 node)
+
+    // Copy data before removed entry
+    List.copyRange(newContent, 0, content, 0, dataPayloadIndex);
+    // Copy data after removed entry
+    List.copyRange(
+      newContent,
+      dataPayloadIndex,
+      content,
+      dataPayloadIndex + 2,
+      nodeStartIndex,
+    );
+    // Copy nodes before insertion point
+    List.copyRange(
+      newContent,
+      nodeStartIndex - 2,
+      content,
+      nodeStartIndex,
+      nodeStartIndex + newNodeIndex,
+    );
+    // Insert the new subNode
+    newContent[newContentNodeIndex] = subNode;
+    // Copy nodes after insertion point
+    List.copyRange(
+      newContent,
+      newContentNodeIndex + 1,
+      content,
+      nodeStartIndex + newNodeIndex,
+      content.length,
+    );
+
+    return newContent;
+  }
+
+  /// Creates a new content array replacing a sub-node with a data entry.
+  List<Object?> replaceNodeWithData(int nodeIndex, K key, V value) {
+    final dataEndIndex = bitCount(dataMap) * 2; // OLD dataMap count
+    final contentNodeIndex = dataEndIndex + nodeIndex;
+    final newDataIndex = bitCount(
+      dataMap,
+    ); // Index within the data section (NEW dataMap)
+    final newContentDataIndex = newDataIndex * 2;
+
+    final newContent = List<Object?>.filled(
+      content.length + 1,
+      null,
+    ); // Size increases by 1 (1 node -> 2 data)
+
+    // Copy existing data entries
+    List.copyRange(newContent, 0, content, 0, dataEndIndex);
+    // Copy nodes before the replaced node
+    List.copyRange(
+      newContent,
+      dataEndIndex,
+      content,
+      dataEndIndex,
+      contentNodeIndex,
+    );
+    // Insert the new data entry where the node was (conceptually)
+    newContent[newContentDataIndex] = key;
+    newContent[newContentDataIndex + 1] = value;
+    // Copy nodes after the replaced node (adjusting destination index)
+    List.copyRange(
+      newContent,
+      newContentDataIndex + 2,
+      content,
+      contentNodeIndex + 1,
+      content.length,
+    );
+
+    return newContent;
+  }
+
+  // Helper to get the hash of a key (assuming non-null keys for now)
+  // TODO: Handle null keys if necessary
+  int hashOfKey(K key) => key.hashCode;
+}
+
+// --- Helper Functions for Node Creation ---
+
+/// Merges two data entries into a new node (either Internal or Collision).
+ChampNode<K, V> mergeDataEntries<K, V>(
+  int shift,
+  int hash1,
+  K key1,
+  V value1,
+  int hash2,
+  K key2,
+  V value2,
+) {
+  assert(key1 != key2); // Keys must be different if merging
+
+  if (shift >= 32) {
+    // Max shift level reached, must be a collision node
+    return ChampCollisionNode<K, V>(hash1, [
+      MapEntry(key1, value1),
+      MapEntry(key2, value2),
+    ]);
+  }
+
+  final frag1 = indexFragment(shift, hash1);
+  final frag2 = indexFragment(shift, hash2);
+
+  if (frag1 != frag2) {
+    // Fragments differ, create an internal node with two data entries
+    final bitpos1 = 1 << frag1;
+    final bitpos2 = 1 << frag2;
+    final newDataMap = bitpos1 | bitpos2;
+    // Order entries based on fragment index
+    if (frag1 < frag2) {
+      return ChampInternalNode<K, V>(newDataMap, 0, [
+        key1,
+        value1,
+        key2,
+        value2,
+      ]);
+    } else {
+      return ChampInternalNode<K, V>(newDataMap, 0, [
+        key2,
+        value2,
+        key1,
+        value1,
+      ]);
+    }
+  } else {
+    // Fragments are the same, recurse deeper
+    final subNode = mergeDataEntries(
+      shift + kBitPartitionSize, // Use correct constant
+      hash1,
+      key1,
+      value1,
+      hash2,
+      key2,
+      value2,
+    );
+    final bitpos = 1 << frag1;
+    final newNodeMap = bitpos; // Only contains the new sub-node
+    return ChampInternalNode<K, V>(0, newNodeMap, [subNode]);
+  }
+}

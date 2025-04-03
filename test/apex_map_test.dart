@@ -1,6 +1,27 @@
 import 'package:apex_collections/apex_collections.dart'; // Assuming this exports ApexMap
 import 'package:test/test.dart';
 
+// Helper class with controlled hash code to force collisions
+class HashCollider {
+  final String id;
+  final int hashCodeValue;
+
+  HashCollider(this.id, this.hashCodeValue);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HashCollider &&
+          runtimeType == other.runtimeType &&
+          id == other.id;
+
+  @override
+  int get hashCode => hashCodeValue;
+
+  @override
+  String toString() => 'HC($id, #$hashCodeValue)';
+}
+
 void main() {
   group('ApexMap Empty', () {
     test('empty() constructor creates an empty map', () {
@@ -38,15 +59,235 @@ void main() {
     });
 
     test('empty map hashCode', () {
-      expect(ApexMap.empty().hashCode, equals(ApexMap.empty().hashCode));
-      // TODO: Define expected hash code for empty map (e.g., 0 or based on MapEquality)
+      final empty1 = ApexMap<String, int>.empty();
+      final empty2 = ApexMap<int, bool>.empty();
+      expect(empty1.hashCode, equals(0)); // Implementation returns 0 for empty
+      expect(empty2.hashCode, equals(0));
+      expect(empty1.hashCode, equals(empty2.hashCode));
     });
-
-    // TODO: Add tests for modification methods on empty map (add, update, remove, etc.)
-    // TODO: Add tests for Iterable methods on empty map (map, where, etc.)
   });
 
-  // TODO: Add groups for ApexMap.from(), ApexMap.fromEntries()
+  group('ApexMap Empty Map Modifications', () {
+    final emptyMap = ApexMap<String, int>.empty();
+    group('ApexMap Factories', () {
+      test('fromEntries constructor', () {
+        final entries = [
+          const MapEntry('a', 1),
+          const MapEntry('b', 2),
+          const MapEntry('c', 3),
+        ];
+        final map = ApexMap<String, int>.fromEntries(entries);
+
+        expect(map.length, 3);
+        expect(map['a'], 1);
+        expect(map['b'], 2);
+        expect(map['c'], 3);
+        expect(map.keys.toSet(), equals({'a', 'b', 'c'}));
+
+        // From empty entries
+        final emptyMap = ApexMap<String, int>.fromEntries([]);
+        expect(emptyMap.isEmpty, isTrue);
+        expect(identical(emptyMap, ApexMap<String, int>.empty()), isTrue);
+
+        // From entries with duplicate keys (last one wins)
+        final entriesDup = [
+          const MapEntry('a', 1),
+          const MapEntry('b', 2),
+          const MapEntry('a', 10), // Duplicate key 'a'
+        ];
+        final mapDup = ApexMap<String, int>.fromEntries(entriesDup);
+        expect(mapDup.length, 2);
+        expect(mapDup['a'], 10); // Last 'a' value should win
+        expect(mapDup['b'], 2);
+      });
+    });
+
+    group('ApexMap Iterator Edge Cases', () {
+      // Helper class defined at top level now.
+      test('iterator with hash collisions', () {
+        final collider1a = HashCollider('1a', 100);
+        final collider1b = HashCollider(
+          '1b',
+          100,
+        ); // Same hash, different object
+        final collider2 = HashCollider('2', 200);
+        final collider3a = HashCollider('3a', 100); // Same hash as 1a/1b
+
+        final map = ApexMap<HashCollider, int>.empty()
+            .add(collider1a, 1)
+            .add(collider2, 2)
+            .add(collider1b, 10) // Collision with 1a
+            .add(collider3a, 3); // Collision with 1a/1b
+
+        expect(map.length, 4);
+        expect(map[collider1a], 1);
+        expect(map[collider1b], 10);
+        expect(map[collider2], 2);
+        expect(map[collider3a], 3);
+
+        // Check iterator yields all elements despite collisions
+        final entriesSet = map.entries.toSet();
+        expect(
+          entriesSet,
+          equals({
+            MapEntry(collider1a, 1),
+            MapEntry(collider1b, 10),
+            MapEntry(collider2, 2),
+            MapEntry(collider3a, 3),
+          }),
+        );
+        expect(
+          entriesSet.length,
+          4,
+        ); // Ensure all distinct entries were iterated
+      });
+    });
+
+    group('ApexMap Iterable Methods', () {
+      final map = ApexMap<String, int>.empty()
+          .add('a', 1)
+          .add('b', 2)
+          .add('c', 3);
+
+      test('where', () {
+        final filtered = map.where((e) => e.value.isEven || e.key == 'a');
+        // Use sets for order-independent comparison
+        expect(filtered.toSet(), equals({MapEntry('a', 1), MapEntry('b', 2)}));
+      });
+
+      test('map', () {
+        final mapped = map.map((e) => '${e.key}:${e.value}');
+        // Use sets for order-independent comparison
+        expect(mapped.toSet(), equals({'a:1', 'b:2', 'c:3'}));
+      });
+
+      test('any', () {
+        expect(map.any((e) => e.value > 2), isTrue);
+        expect(map.any((e) => e.key == 'd'), isFalse);
+      });
+
+      test('every', () {
+        expect(map.every((e) => e.value > 0), isTrue);
+        expect(map.every((e) => e.key != 'b'), isFalse);
+      });
+
+      test('take', () {
+        // Order is not guaranteed, so test properties
+        final taken = map.take(2);
+        expect(taken.length, 2);
+        expect(taken.every((e) => map.containsKey(e.key)), isTrue);
+      });
+
+      test('skip', () {
+        // Order is not guaranteed, so test properties
+        final skipped = map.skip(1);
+        expect(skipped.length, 2);
+        expect(skipped.every((e) => map.containsKey(e.key)), isTrue);
+        // Ensure the skipped element is not present
+        final skippedKeys = skipped.map((e) => e.key).toSet();
+        expect(map.keys.any((k) => !skippedKeys.contains(k)), isTrue);
+      });
+
+      test('fold', () {
+        final sum = map.fold<int>(0, (prev, e) => prev + e.value);
+        expect(sum, 6); // 1 + 2 + 3
+      });
+
+      test('reduce', () {
+        // Reduce requires a non-empty iterable, test behavior is complex without guaranteed order
+        // Example: combine keys (order dependent!)
+        // final combinedKeys = map.reduce((val, e) => MapEntry(val.key + e.key, 0)).key;
+        // expect(combinedKeys.length, 3); // e.g., 'abc' or 'acb' etc.
+        expect(
+          () => ApexMap<String, int>.empty().reduce((v, e) => v),
+          throwsStateError,
+        );
+      });
+    });
+
+    test('add on empty', () {
+      final map1 = emptyMap.add('a', 1);
+      expect(map1.length, 1);
+      expect(map1['a'], 1);
+    });
+
+    test('remove on empty', () {
+      final map1 = emptyMap.remove('a');
+      expect(identical(map1, emptyMap), isTrue);
+    });
+
+    test('update on empty', () {
+      final map1 = emptyMap.update('a', (v) => v + 1); // No ifAbsent
+      final map2 = emptyMap.update('a', (v) => v + 1, ifAbsent: () => 99);
+      expect(identical(map1, emptyMap), isTrue);
+      expect(map2.length, 1);
+      expect(map2['a'], 99);
+    });
+
+    test('addAll on empty', () {
+      final map1 = emptyMap.addAll({'b': 2, 'c': 3});
+      expect(map1.length, 2);
+      expect(map1['b'], 2);
+      expect(map1['c'], 3);
+    });
+
+    test('removeWhere on empty', () {
+      final map1 = emptyMap.removeWhere((k, v) => true);
+      expect(identical(map1, emptyMap), isTrue);
+    });
+
+    test('updateAll on empty', () {
+      final map1 = emptyMap.updateAll((k, v) => v + 1);
+      expect(identical(map1, emptyMap), isTrue);
+    });
+
+    test('mapEntries on empty', () {
+      final map1 = emptyMap.mapEntries(
+        (k, v) => MapEntry(k.toUpperCase(), v.toString()),
+      );
+      expect(
+        identical(map1, emptyMap),
+        isTrue,
+      ); // Should return the same empty instance
+      expect(map1, isA<ApexMap<String, String>>()); // Check type propagation
+    });
+
+    test('clear on empty', () {
+      final map1 = emptyMap.clear();
+      expect(identical(map1, emptyMap), isTrue);
+    });
+  });
+
+  group('ApexMap Empty Map Iterables', () {
+    final emptyMap = ApexMap<String, int>.empty();
+
+    test('iterator', () {
+      expect(emptyMap.iterator.moveNext(), isFalse);
+    });
+    test('keys', () {
+      expect(emptyMap.keys.isEmpty, isTrue);
+    });
+    test('values', () {
+      expect(emptyMap.values.isEmpty, isTrue);
+    });
+    test('entries', () {
+      expect(emptyMap.entries.isEmpty, isTrue);
+    });
+    test('where', () {
+      expect(emptyMap.where((e) => true).isEmpty, isTrue);
+    });
+    test('map', () {
+      expect(emptyMap.map((e) => e.key).isEmpty, isTrue);
+    });
+    test('any', () {
+      expect(emptyMap.any((e) => true), isFalse);
+    });
+    test('every', () {
+      expect(emptyMap.every((e) => false), isTrue); // Vacuously true
+    });
+  });
+
+  // ApexMap.from() tested in Other Operations group. Adding fromEntries here.
 
   group('ApexMap Basic Operations', () {
     test('add single element', () {
@@ -410,6 +651,63 @@ void main() {
       }
       expect(iteratedEntries.toSet(), equals(expectedEntries));
     });
-    // TODO: Add tests for more complex iterator scenarios (e.g., after removals)
+    // Iterator tested with add/remove sequence above. Collision test added separately.
+
+    group('ApexMap Other Operations', () {
+      test('fromMap constructor', () {
+        final source = {'a': 1, 'b': 2, 'c': 3};
+        final map = ApexMap<String, int>.from(source);
+
+        expect(map.length, 3);
+        expect(map['a'], 1);
+        expect(map['b'], 2);
+        expect(map['c'], 3);
+        expect(map.keys.toSet(), equals({'a', 'b', 'c'}));
+
+        // From empty map
+        final emptyMap = ApexMap<String, int>.from({});
+        expect(emptyMap.isEmpty, isTrue);
+        expect(identical(emptyMap, ApexMap<String, int>.empty()), isTrue);
+      });
+
+      test('clear', () {
+        final map1 = ApexMap<String, int>.empty().add('a', 1).add('b', 2);
+        final map2 = map1.clear();
+        final map3 = ApexMap<String, int>.empty().clear();
+
+        expect(map2.isEmpty, isTrue);
+        expect(map2.length, 0);
+        // Check that clear returns the cached empty instance for the type
+        expect(identical(map2, map3), isTrue);
+        // Comparing against a new ApexMap.empty() might fail if Type object identity differs,
+        // so we rely on comparing two results of clear().
+        expect(map1.length, 2); // Original unchanged
+      });
+
+      test('forEachEntry', () {
+        final map = ApexMap<String, int>.empty().add('a', 1).add('b', 2);
+        final entriesSeen = <String, int>{};
+        map.forEachEntry((key, value) {
+          entriesSeen[key] = value;
+        });
+
+        expect(entriesSeen, equals({'a': 1, 'b': 2}));
+      });
+
+      test('putIfAbsent (stub behavior)', () {
+        final map = ApexMap<String, int>.empty().add('a', 1);
+
+        // Key exists
+        final result1 = map.putIfAbsent('a', () => 99);
+        expect(result1, 1); // Returns existing value
+        expect(map.length, 1); // Map remains unchanged
+
+        // Key doesn't exist
+        final result2 = map.putIfAbsent('b', () => 99);
+        expect(result2, 99); // Returns value from ifAbsent
+        expect(map.length, 1); // Map remains unchanged (as it's immutable)
+        expect(map.containsKey('b'), isFalse);
+      });
+    }); // End of Other Operations group
   });
 }

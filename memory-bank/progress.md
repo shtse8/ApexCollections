@@ -33,13 +33,13 @@
 
 ## Known Issues / Blockers
 
--   RRB-Tree rebalancing/merging logic in `RrbInternalNode.removeAt` needs implementation (currently placeholder).
--   `ApexListImpl` needs efficient implementations for modification methods (`insert`, `insertAll`, `removeWhere`, `sublist`, `operator+`, `indexOf`, `lastIndexOf`, etc.) and optimized `==`/`hashCode`.
+-   RRB-Tree rebalancing/merging logic in `RrbInternalNode.removeAt` appears mostly correct, but a test case involving many removals (`removeAt causes node merges/rebalancing`) fails with an assertion in `RrbLeafNode.removeAt`, indicating an invalid index is passed down during complex rebalancing scenarios. The exact interaction causing this needs further investigation.
+-   `ApexListImpl` methods (`insert`, `addAll`, `insertAll`, `sublist`, `operator+`, `indexOf`, `==`, `hashCode`) have been updated with more efficient (though not fully node-optimized for bulk/slice/concat) implementations. `removeWhere`, `lastIndexOf`, `clear`, `asMap`, `sort`, `shuffle` still use basic implementations.
 -   `ApexMapImpl` needs efficient implementations for bulk operations (`fromMap`, `addAll`), `update`, `updateAll`, `removeWhere`, `mapEntries`, and optimized `==`/`hashCode`.
 
 ## Next Milestones (Phase 3 Continuation)
 
-1.  **Implement RRB-Tree Rebalancing/Merging:** Implement the `_rebalanceOrMerge` logic in `RrbInternalNode` (`lib/src/list/rrb_node.dart`).
-2.  **Implement Efficient `ApexListImpl` Methods:** Replace placeholder implementations in `ApexListImpl` with efficient node-based logic.
-3.  **Complete `ApexList` Unit Tests:** Add tests for remaining methods and edge cases, especially those involving node rebalancing/merging once implemented (`apex_list_test.dart`).
+1.  **Debug RRB-Tree `removeAt` Rebalancing:** Investigate the assertion failure in the `removeAt causes node merges/rebalancing` test to pinpoint the index calculation issue during complex removals in relaxed nodes.
+2.  **Implement Remaining Efficient `ApexListImpl` Methods:** Implement efficient versions for `removeWhere`, `lastIndexOf`, `clear`, `asMap`, `sort`, `shuffle`. Consider node-level optimizations for `sublist` and `operator+`.
+3.  **Complete `ApexList` Unit Tests:** Add tests for the remaining methods (`remove`, `removeWhere`, `lastIndexOf`, etc.).
 4.  **Refine `ApexMapImpl` Methods:** Implement efficient bulk operations and `==`/`hashCode` for `ApexMapImpl`.
