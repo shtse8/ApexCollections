@@ -139,6 +139,31 @@ Based on Ziqi Wang's paper review:
 
 
 
+
+### CHAMP Node Structure & Insertion (Summary - 2025-04-03 ~03:02 UTC+1)
+
+Based on Steindorfer (2017) thesis, Chapter 3:
+
+**Node Structure:**
+
+-   **Dual Bitmaps:** Uses `datamap` (for payload presence) and `nodemap` (for sub-node presence) instead of HAMT's single bitmap + dynamic checks.
+-   **Compact Array:** Stores payloads and sub-node pointers contiguously in a single `Object[]`, eliminating NULLs.
+-   **Optimized Layout:** Payloads stored from the start (index 0 upwards), sub-nodes stored from the end (index `array.length - 1` downwards) to simplify indexing and avoid storing the payload count explicitly.
+-   **Indexing:** Uses `Integer.bitCount` on the relevant bitmap (`datamap` for payload, `nodemap` for sub-nodes) combined with the array length for efficient offset calculation into the compact array.
+
+**Insertion Algorithm Principles:**
+
+1.  **Hashing & Path:** Determine hash chunk and `bitpos` for the current level.
+2.  **Check Slot:** Examine `datamap` and `nodemap` at `bitpos`.
+3.  **Empty Slot:** Copy node, insert payload into data section, set `datamap` bit.
+4.  **Data Slot:**
+    -   *Keys Equal:* Update value (if map) or return original. Create new node if value updated.
+    -   *Keys Different (Hash Collision):* Create collision node, replace original payload with collision node (no bitmap change).
+    -   *Keys Different (Hashes Differ):* Path expansion needed. Create new sub-node one level deeper, insert both old and new payloads into it. Modify current node: clear `datamap` bit, set `nodemap` bit, replace old payload with new sub-node pointer in the compact array.
+5.  **Sub-Node Slot:** Recursively call insert on sub-node. If recursion returns a modified sub-node, update the pointer in a new copy of the current node.
+6.  **Path Copying:** All modifications create new node copies up the path to the root.
+
+
 ### Key Resources Identified:
 
 1.  **Primary Resource (Thesis):**
