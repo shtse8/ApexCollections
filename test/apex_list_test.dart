@@ -1,6 +1,10 @@
 import 'package:apex_collections/apex_collections.dart';
 import 'dart:math'; // For Random
 
+import 'package:apex_collections/src/list/apex_list.dart'; // For ApexListImpl
+import 'package:apex_collections/src/list/rrb_node.dart'
+    as rrb; // For RrbInternalNode
+
 import 'package:test/test.dart';
 
 void main() {
@@ -425,6 +429,29 @@ void main() {
 
         if (removeIndex < currentLength) {
           final removedValue = expectedElements.removeAt(removeIndex);
+          // Debug print before removeAt
+          if (removeIndex == 200) {
+            // Specific index causing the issue
+            print(
+              'DEBUG: Before removeAt($removeIndex), currentLength: $currentLength',
+            );
+            print('DEBUG: Root node: ${(list as ApexListImpl<int>).debugRoot}');
+            // Optionally print more details about the root node if needed
+            if ((list as ApexListImpl<int>).debugRoot
+                is rrb.RrbInternalNode<int>) {
+              final internalRoot =
+                  (list as ApexListImpl<int>).debugRoot
+                      as rrb.RrbInternalNode<int>;
+              print(
+                'DEBUG: Root children count: ${internalRoot.children.length}',
+              );
+              print(
+                'DEBUG: Root child 0 count: ${internalRoot.children[0].count}',
+              );
+              print('DEBUG: Root sizeTable: ${internalRoot.sizeTable}');
+            }
+          }
+
           list = list.removeAt(removeIndex);
           currentLength--;
         }

@@ -35,6 +35,9 @@ class ApexListImpl<E> extends ApexList<E> {
         as ApexListImpl<E>;
   }
 
+  // Temporary getter for debugging
+  rrb.RrbNode<E>? get debugRoot => _root;
+
   /// Internal constructor (cannot be const due to Expando cache).
   ApexListImpl._(this._root, this._length);
 
@@ -883,8 +886,9 @@ class _RrbTreeIterator<E> implements Iterator<E> {
   final List<rrb.RrbNode<E>> _nodeStack = [];
   final List<int> _indexStack = [];
 
-  // Iterator for the current leaf node being processed
-  Iterator<E>? _leafIterator;
+  // Current leaf node being processed and index within it
+  rrb.RrbLeafNode<E>? _currentLeaf;
+  int _leafIndex = 0;
 
   E? _currentElement;
 
@@ -911,12 +915,14 @@ class _RrbTreeIterator<E> implements Iterator<E> {
   @override
   bool moveNext() {
     // 1. Continue iterating through the current leaf if possible
-    if (_leafIterator != null) {
-      if (_leafIterator!.moveNext()) {
-        _currentElement = _leafIterator!.current;
+    if (_currentLeaf != null) {
+      if (_leafIndex < _currentLeaf!.elements.length) {
+        _currentElement = _currentLeaf!.elements[_leafIndex];
+        _leafIndex++;
         return true;
       } else {
-        _leafIterator = null; // Current leaf exhausted
+        _currentLeaf = null; // Current leaf exhausted
+        _leafIndex = 0;
       }
     }
 
@@ -930,17 +936,24 @@ class _RrbTreeIterator<E> implements Iterator<E> {
         _nodeStack.removeLast(); // Pop this leaf from the node stack
         _indexStack.removeLast();
 
+        // Found a non-empty leaf
         if (node.elements.isNotEmpty) {
-          _leafIterator = node.elements.iterator;
-          // Immediately try to advance the new leaf iterator
-          if (_leafIterator!.moveNext()) {
-            _currentElement = _leafIterator!.current;
+          _currentLeaf = node;
+          _leafIndex = 0;
+          // Immediately try to get the first element of the new leaf
+          if (_leafIndex < _currentLeaf!.elements.length) {
+            _currentElement = _currentLeaf!.elements[_leafIndex];
+            _leafIndex++;
             return true;
           } else {
-            _leafIterator = null; // Leaf was empty, continue stack traversal
+            // Leaf was technically not empty but became exhausted immediately?
+            // This case seems unlikely if node.elements.isNotEmpty passed.
+            // Resetting just in case.
+            _currentLeaf = null;
+            _leafIndex = 0;
           }
         }
-        // If leaf was empty or iterator exhausted immediately, continue loop
+        // If leaf was empty or exhausted immediately, continue stack traversal
         continue;
       } else if (node is rrb.RrbInternalNode<E>) {
         // Internal node: descend into the next child
@@ -963,7 +976,7 @@ class _RrbTreeIterator<E> implements Iterator<E> {
       }
     }
 
-    // Stack is empty and no leaf iterator is active, iteration complete
+    // Stack is empty and no current leaf is active, iteration complete
     _currentElement = null;
     return false;
   }
