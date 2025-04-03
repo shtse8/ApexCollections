@@ -185,6 +185,23 @@ Based on Steindorfer (2017) thesis, Chapter 3:
 6.  **Path Copying:** All modifications create new node copies up the path to the root.
 
 
+### CHAMP Deletion Algorithm & Canonicalization (Summary - 2025-04-03 ~03:09 UTC+1)
+
+Based on Steindorfer (2017) thesis, Chapter 3.4:
+
+-   **Goal:** Maintain canonical form (no singleton paths, single elements inlined) via invariant `branchSize >= 2 * nodeArity + payloadArity`.
+-   **Process:** Recursive deletion down the hash path.
+-   **Canonicalization on Return:** When returning from recursion (`isModified == true`):
+    -   *Check Node Arity & Result Branch Size:* Use `arity` of current node and `branchSize` (approximated by `sizePredicate`) of the returned node (`resultNode`).
+    -   *Case A (Singleton Path Collapse):* If `current.arity == 1` && `resultNode.branchSize == 1`, return `resultNode` directly (removes current node).
+    -   *Case B (Singleton Path Persists):* If `current.arity == 1` && `resultNode.branchSize > 1`, update current node's pointer to `resultNode`.
+    -   *Case C (Inline Collapsed Child):* If `current.arity > 1` && `resultNode.branchSize == 1`, inline the single element from `resultNode` into the current node (replace sub-node pointer with data payload, update bitmaps).
+    -   *Case D (Standard Update):* Otherwise, update the current node's pointer to `resultNode`.
+-   **`sizePredicate`:** Efficient local approximation of `branchSize` (returns EMPTY, ONE, or MORE_THAN_ONE) used for canonicalization logic.
+-   **Result:** Ensures identical trees for identical content, enabling efficient structure-based equality.
+
+
+
 ### Key Resources Identified:
 
 1.  **Primary Resource (Thesis):**
