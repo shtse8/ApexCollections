@@ -60,6 +60,15 @@ Initial research based on `clojure/core.rrb-vector/doc/rrb-tree-notes.md` and we
 
 Initial research based on web searches.
 
+### HAMT Structure (Foundation for CHAMP):
+
+-   **Hybrid:** Combines hash tables and array-mapped tries (prefix trees).
+-   **Hashing:** Keys are hashed.
+-   **Trie Path:** Hash is split into chunks (e.g., 5 bits per level) to determine the path down the trie.
+-   **Sparse Nodes:** Nodes use a bitmap to track occupied child slots and a dense array for actual child pointers, saving memory compared to full arrays.
+-   **Collision Handling:** When keys hash to the same path/bucket, a secondary mechanism (e.g., list) stores colliding entries.
+
+
 ### Core Concepts (Preliminary):
 
 -   **Improvement over HAMT:** CHAMP (Compressed Hash-Array Mapped Prefix Trie) is designed as an optimization over HAMT (Hash-Array Mapped Trie), which is used by `fast_immutable_collections`.
