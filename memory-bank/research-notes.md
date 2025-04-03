@@ -92,6 +92,22 @@ Initial research based on web searches.
 -   **Goals:** Aims for better performance (potentially iteration) and lower memory usage compared to HAMT.
 -   **Mechanism:** Likely involves different node representations or compression techniques within the trie structure compared to HAMT.
 
+### CHAMP vs HAMT Comparison (Summary - 2025-04-03 ~02:57 UTC+1)
+
+Based on Ziqi Wang's paper review:
+
+| Feature             | HAMT (Baseline)                                  | CHAMP (Optimized)                                                                 |
+| :------------------ | :----------------------------------------------- | :-------------------------------------------------------------------------------- |
+| **Node Storage**    | Fixed-size arrays (e.g., 32 slots), many NULLs | Compact arrays, no NULLs stored. Bitmaps (`nodeMap`, `dataMap`) track occupancy. |
+| **Memory Usage**    | Higher due to NULLs                              | Lower on average (eliminates NULLs).                                              |
+| **Cache Locality**  | Poorer (sparse nodes, interleaved data/pointers) | Better (dense nodes, data/pointers potentially grouped).                          |
+| **Deletion**        | Leaves non-canonical structure (singleton paths) | Path compression ("folding") ensures canonical structure.                         |
+| **Equality Check**  | Content-based (iteration), inefficient         | Structure-based (bitmaps, elements, recursive), efficient due to canonical form.  |
+| **Iteration**       | Potentially poor cache locality                  | Optimized locality (iterate local data first, then recurse).                      |
+| **Optional**        | -                                                | Can store incremental hashes (element/node/tree) for faster comparisons.          |
+
+
+
 ### Key Resources Identified:
 
 1.  **Primary Resource (Thesis):**
