@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart'; // For IterableMixin if needed later
 import 'apex_list_api.dart';
 import 'rrb_node.dart';
 
@@ -14,10 +15,14 @@ class ApexListImpl<E> extends ApexList<E> {
   factory ApexListImpl.fromIterable(Iterable<E> elements) {
     if (elements.isEmpty) {
       // How to return the const empty instance? Need access to ApexList.empty() or a static const field.
-      // For now, throw unimplemented, requires linking API and Impl.
-      throw UnimplementedError(
-        'Cannot return empty list from impl factory yet',
-      );
+      // This requires linking the API and Impl properly, maybe via a shared const instance.
+      // For now, assume ApexList.empty() works (it points to _EmptyApexList).
+      // A better approach might be needed later.
+      return ApexList.empty()
+          as ApexListImpl<
+            E
+          >; // Cast needed, potentially unsafe if empty isn't this type
+      // throw UnimplementedError('Cannot return empty list from impl factory yet');
     }
     // TODO: Actual implementation using builder/nodes
     throw UnimplementedError('ApexListImpl.fromIterable');
@@ -48,18 +53,16 @@ class ApexListImpl<E> extends ApexList<E> {
   @override
   E get first {
     if (isEmpty) throw StateError('No element');
-    return this[0];
+    return this[0]; // Reuse existing operator[]
   }
 
   @override
   E get last {
     if (isEmpty) throw StateError('No element');
-    return this[_length - 1];
+    return this[_length - 1]; // Reuse existing operator[] and length
   }
 
   // --- Modification Operations ---
-  // These will delegate to the RrbNode methods, handle tail/focus,
-  // and potentially create new ApexListImpl instances.
 
   @override
   ApexList<E> add(E value) {
@@ -140,110 +143,274 @@ class ApexListImpl<E> extends ApexList<E> {
   }
 
   // --- Iterable Methods ---
-  // Most can rely on default implementations if using IterableMixin,
-  // but overriding for efficiency using tree structure is often beneficial.
 
   @override
-  Iterator<E> get iterator {
-    // TODO: Implement efficient iterator traversing the RRB-Tree
-    throw UnimplementedError('iterator');
+  Iterator<E> get iterator => _RrbTreeIterator<E>(this);
+
+  // --- Stubs for remaining Iterable methods ---
+  // These should ideally delegate to the iterator or be optimized
+
+  @override
+  bool any(bool Function(E element) test) {
+    for (final element in this) {
+      if (test(element)) return true;
+    }
+    return false;
   }
 
-  // --- Other Iterable method implementations ---
-  // Stubs for now, many could delegate to iterator logic later
+  @override
+  Iterable<T> cast<T>() => map((e) => e as T); // Default cast via map
 
   @override
-  bool contains(Object? element) => throw UnimplementedError('contains');
+  bool contains(Object? element) {
+    for (final e in this) {
+      if (e == element) return true;
+    }
+    return false;
+  }
 
   @override
-  E elementAt(int index) => this[index]; // Can reuse operator[]
+  E elementAt(int index) {
+    RangeError.checkValidIndex(index, this);
+    return this[index]; // Reuse existing efficient lookup
+  }
 
   @override
-  Iterable<T> expand<T>(Iterable<T> Function(E element) toElements) =>
-      throw UnimplementedError('expand');
+  bool every(bool Function(E element) test) {
+    for (final element in this) {
+      if (!test(element)) return false;
+    }
+    return true;
+  }
 
   @override
-  E firstWhere(bool Function(E element) test, {E Function()? orElse}) =>
-      throw UnimplementedError('firstWhere');
+  Iterable<T> expand<T>(Iterable<T> Function(E element) toElements) sync* {
+    for (final element in this) {
+      yield* toElements(element);
+    }
+  }
 
   @override
-  T fold<T>(T initialValue, T Function(T previousValue, E element) combine) =>
-      throw UnimplementedError('fold');
+  E firstWhere(bool Function(E element) test, {E Function()? orElse}) {
+    for (final element in this) {
+      if (test(element)) return element;
+    }
+    if (orElse != null) return orElse();
+    throw StateError('No element');
+  }
 
   @override
-  void forEach(void Function(E element) action) =>
-      throw UnimplementedError('forEach');
+  T fold<T>(T initialValue, T Function(T previousValue, E element) combine) {
+    var value = initialValue;
+    for (final element in this) {
+      value = combine(value, element);
+    }
+    return value;
+  }
 
   @override
-  String join([String separator = '']) => throw UnimplementedError('join');
+  Iterable<E> followedBy(Iterable<E> other) sync* {
+    yield* this;
+    yield* other;
+  }
 
   @override
-  E lastWhere(bool Function(E element) test, {E Function()? orElse}) =>
-      throw UnimplementedError('lastWhere');
+  void forEach(void Function(E element) action) {
+    for (final element in this) {
+      action(element);
+    }
+  }
 
   @override
-  Iterable<T> map<T>(T Function(E e) convert) =>
-      throw UnimplementedError('map');
+  String join([String separator = '']) {
+    final buffer = StringBuffer();
+    var first = true;
+    for (final element in this) {
+      if (!first) buffer.write(separator);
+      buffer.write(element);
+      first = false;
+    }
+    return buffer.toString();
+  }
 
   @override
-  E reduce(E Function(E value, E element) combine) =>
-      throw UnimplementedError('reduce');
+  E lastWhere(bool Function(E element) test, {E Function()? orElse}) {
+    E? result;
+    bool found = false;
+    for (final element in this) {
+      if (test(element)) {
+        result = element;
+        found = true;
+      }
+    }
+    if (found) return result!;
+    if (orElse != null) return orElse();
+    throw StateError('No element');
+  }
 
   @override
-  E get single => throw UnimplementedError('single');
+  Iterable<T> map<T>(T Function(E e) convert) sync* {
+    for (final element in this) {
+      yield convert(element);
+    }
+  }
 
   @override
-  E singleWhere(bool Function(E element) test, {E Function()? orElse}) =>
-      throw UnimplementedError('singleWhere');
+  E reduce(E Function(E value, E element) combine) {
+    Iterator<E> iterator = this.iterator;
+    if (!iterator.moveNext()) {
+      throw StateError('No element');
+    }
+    E value = iterator.current;
+    while (iterator.moveNext()) {
+      value = combine(value, iterator.current);
+    }
+    return value;
+  }
 
   @override
-  Iterable<E> skip(int count) => throw UnimplementedError('skip');
+  E get single {
+    Iterator<E> iterator = this.iterator;
+    if (!iterator.moveNext()) throw StateError('No element');
+    E result = iterator.current;
+    if (iterator.moveNext()) throw StateError('Too many elements');
+    return result;
+  }
 
   @override
-  Iterable<E> skipWhile(bool Function(E value) test) =>
-      throw UnimplementedError('skipWhile');
+  E singleWhere(bool Function(E element) test, {E Function()? orElse}) {
+    E? result;
+    bool found = false;
+    for (final element in this) {
+      if (test(element)) {
+        if (found) throw StateError('Too many elements');
+        result = element;
+        found = true;
+      }
+    }
+    if (found) return result!;
+    if (orElse != null) return orElse();
+    throw StateError('No element');
+  }
 
   @override
-  Iterable<E> take(int count) => throw UnimplementedError('take');
+  Iterable<E> skip(int count) sync* {
+    RangeError.checkNotNegative(count, 'count');
+    int skipped = 0;
+    for (final element in this) {
+      if (skipped >= count) {
+        yield element;
+      } else {
+        skipped++;
+      }
+    }
+  }
 
   @override
-  Iterable<E> takeWhile(bool Function(E value) test) =>
-      throw UnimplementedError('takeWhile');
+  Iterable<E> skipWhile(bool Function(E value) test) sync* {
+    bool skipping = true;
+    for (final element in this) {
+      if (skipping && test(element)) continue;
+      skipping = false;
+      yield element;
+    }
+  }
 
   @override
-  List<E> toList({bool growable = true}) => throw UnimplementedError('toList');
+  Iterable<E> take(int count) sync* {
+    RangeError.checkNotNegative(count, 'count');
+    if (count == 0) return;
+    int taken = 0;
+    for (final element in this) {
+      yield element;
+      taken++;
+      if (taken == count) return;
+    }
+  }
 
   @override
-  Set<E> toSet() => throw UnimplementedError('toSet');
+  Iterable<E> takeWhile(bool Function(E value) test) sync* {
+    for (final element in this) {
+      if (!test(element)) return;
+      yield element;
+    }
+  }
 
   @override
-  Iterable<E> where(bool Function(E element) test) =>
-      throw UnimplementedError('where');
+  List<E> toList({bool growable = true}) =>
+      List<E>.of(this, growable: growable);
 
   @override
-  Iterable<T> whereType<T>() => throw UnimplementedError('whereType');
+  Set<E> toSet() => Set<E>.of(this);
 
   @override
-  bool any(bool Function(E element) test) => throw UnimplementedError('any');
+  Iterable<E> where(bool Function(E element) test) sync* {
+    for (final element in this) {
+      if (test(element)) yield element;
+    }
+  }
 
   @override
-  bool every(bool Function(E element) test) =>
-      throw UnimplementedError('every');
+  Iterable<T> whereType<T>() sync* {
+    for (final element in this) {
+      if (element is T) yield element;
+    }
+  }
+
+  // TODO: Implement == and hashCode based on structural equality.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ApexList<E> &&
+          length == other.length &&
+          ListEquality<E>().equals(
+            toList(growable: false),
+            other.toList(growable: false),
+          )); // Inefficient default
 
   @override
-  Iterable<T> cast<T>() => throw UnimplementedError('cast');
-
-  @override
-  Iterable<E> followedBy(Iterable<E> other) =>
-      throw UnimplementedError('followedBy');
-
-  // TODO: Implement == and hashCode.
-  @override
-  bool operator ==(Object other) => throw UnimplementedError('operator ==');
-
-  @override
-  int get hashCode => throw UnimplementedError('hashCode');
+  int get hashCode => ListEquality<E>().hash(toList(growable: false)); // Inefficient default
 }
 
-// Need to link the factory constructor in the API file to this implementation
-// This requires modifying apex_list_api.dart slightly.
+/// An iterator that traverses the elements of an RRB-Tree based ApexList.
+class _RrbTreeIterator<E> implements Iterator<E> {
+  final ApexListImpl<E> _list;
+  int _currentIndex = -1;
+  E? _currentElement;
+
+  // TODO: Add state for efficient tree traversal (stack of nodes/indices)
+  // For now, uses simple index-based access (inefficient).
+
+  _RrbTreeIterator(this._list);
+
+  @override
+  E get current {
+    // Note: Dart's Iterator contract expects current to be valid *after* moveNext returns true.
+    // It doesn't require a check here if used correctly.
+    // Adding a check can help catch misuse but isn't strictly necessary by contract.
+    if (_currentIndex < 0 || _currentIndex >= _list.length) {
+      // Or return null / throw? Standard iterators might throw here after exhaustion.
+      // Let's stick to the potential null value for _currentElement.
+      if (_currentElement == null)
+        throw StateError('Iterator current is invalid state');
+    }
+    if (_currentElement == null)
+      throw StateError(
+        'Iterator current is invalid state (null)',
+      ); // Should not happen if moveNext true
+    return _currentElement!;
+  }
+
+  @override
+  bool moveNext() {
+    if (_currentIndex + 1 >= _list.length) {
+      _currentElement = null; // Clear current element when iteration ends
+      return false;
+    }
+    _currentIndex++;
+    // Inefficient: uses repeated O(log N) lookups.
+    // A proper iterator would maintain a stack/path through the tree.
+    _currentElement = _list[_currentIndex];
+    return true;
+  }
+}
