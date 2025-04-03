@@ -1,30 +1,30 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~02:47 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~02:51 UTC+1)
 
 -   Project initialized, Memory Bank established, basic Dart package structure confirmed.
--   Initial benchmark files (`list_benchmarks.dart`, `map_benchmarks.dart`) cleaned up and committed/pushed.
--   Ready to define the detailed plan for Phase 1.
+-   Detailed **Phase 1 Plan** defined and documented in `memory-bank/phase1-plan.md`.
+-   Baseline benchmark results for native Dart and `fast_immutable_collections` (size 10k) documented in `memory-bank/baseline-benchmarks.md`.
+-   All changes committed and pushed.
 
 ## Current Focus
 
--   **Planning Phase 1: Research & Benchmarking**
+-   **Phase 1: Research - RRB-Trees**
 
 ## Next Immediate Steps
 
-1.  **Define Phase 1 Plan:** Detail the specific research tasks, data structures, benchmark operations, collection sizes, and data patterns for Phase 1. Document this plan (potentially in a new `phase1-plan.md` or directly within this file/progress.md).
-2.  **Begin Research:** Start investigating the chosen candidate data structures (e.g., RRB-Trees, CHAMP Tries).
-3.  **Implement Baseline Benchmarks:** Ensure the existing benchmark files can be run and produce baseline results for native Dart and `fast_immutable_collections`.
+1.  **Research RRB-Trees:**
+    -   Analyze Clojure's `core.rrb-vector` implementation notes (`doc/rrb-tree-notes.md`).
+    -   Locate and study the original Bagwell/Rompf paper ("RRB-Trees: Efficient Immutable Vectors").
+    -   Summarize findings regarding structure, operations, performance characteristics, and potential Dart implementation challenges (including `const` compatibility).
+2.  **Research CHAMP Tries:** (After initial RRB-Tree research)
+    -   Study relevant papers and existing implementations.
+    -   Compare with HAMT.
+    -   Summarize findings for Dart implementation.
+3.  **Refine Benchmark Suite:** Based on research, add any missing operations identified in the plan to the benchmark files.
 
-## Phase 1 Planning Points (To Be Detailed)
+## Open Questions / Decisions
 
--   **Data Structures:**
-    -   List: Confirm focus on RRB-Trees or alternatives?
-    -   Map: Confirm focus on CHAMP Tries or alternatives (e.g., HAMT)?
--   **Benchmark Operations:**
-    -   List: `add`, `addAll`, `removeAt`, `removeWhere`, `[]` (lookup), iteration, `sublist` (slicing), concatenation (`+`).
-    -   Map: `add`/`[]=` (insert/update), `addAll`, `remove`, `[]` (lookup), iteration (entries, keys, values), `putIfAbsent`, `update`.
--   **Collection Sizes:** Define specific sizes (e.g., 10, 1,000, 100,000, 1,000,000 elements).
--   **Data Patterns:** Define patterns (e.g., sequential integers, random integers, strings, objects with varying hash distributions).
--   **Comparison Targets:** Native Dart collections, `fast_immutable_collections`.
--   **Documentation:** Decide where to document the detailed Phase 1 plan.
+-   Feasibility of implementing RRB-Trees and CHAMP Tries efficiently in Dart.
+-   Confirming `const` compatibility for empty collections.
+-   Strategies for seamless `Iterable` integration.
