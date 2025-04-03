@@ -31,6 +31,13 @@ abstract class RrbNode<E> {
   /// to the end of the subtree represented by this node.
   /// This might involve node splits and increasing tree height.
   RrbNode<E> add(E value);
+
+  /// Returns a new node structure representing the tree after removing the
+  /// element at the effective [index] within this subtree.
+  /// The [index] must be valid within the bounds of this node's [count].
+  /// This might involve node merges and decreasing tree height.
+  /// Returns `null` if the node becomes empty after removal.
+  RrbNode<E>? removeAt(int index);
 }
 
 /// Represents an internal node (branch) in the RRB-Tree.
@@ -203,6 +210,79 @@ class RrbInternalNode<E> extends RrbNode<E> {
       return RrbInternalNode<E>(height, count + 1, newChildren, newSizeTable);
     }
   }
+
+  @override
+  RrbNode<E>? removeAt(int index) {
+    assert(index >= 0 && index < count);
+
+    final shift = height * _kLog2BranchingFactor;
+    final indexInNode = (index >> shift) & (_kBranchingFactor - 1);
+    int slot = indexInNode; // Default for strict case
+    int indexInChild = index & ((1 << shift) - 1); // Default for strict case
+
+    if (isRelaxed) {
+      // Find correct slot and index for relaxed node
+      final sizes = sizeTable!;
+      while (slot > 0 && sizes[slot - 1] > index) {
+        slot--;
+      }
+      while (sizes[slot] <= index) {
+        slot++;
+      }
+      indexInChild = (slot == 0) ? index : index - sizes[slot - 1];
+    }
+
+    final oldChild = children[slot];
+    final newChild = oldChild.removeAt(indexInChild);
+
+    if (identical(oldChild, newChild)) {
+      return this; // No change below
+    }
+
+    final newChildren = List<RrbNode<E>>.of(children);
+    List<int>? newSizeTable =
+        sizeTable != null ? List<int>.of(sizeTable!) : null;
+    final newCount = count - 1;
+
+    if (newChild == null) {
+      // Child became empty, remove it from this node
+      newChildren.removeAt(slot);
+      if (newChildren.isEmpty) {
+        return null; // This node also becomes empty
+      }
+      if (newSizeTable != null) {
+        // Need to recalculate size table after removal
+        newSizeTable.removeAt(slot);
+        for (int i = slot; i < newSizeTable.length; i++) {
+          newSizeTable[i]--; // Decrement subsequent cumulative counts
+        }
+      }
+    } else {
+      // Child was modified but not removed
+      newChildren[slot] = newChild;
+      if (newSizeTable != null) {
+        // Update size table from the modified slot onwards
+        int currentCount = (slot == 0) ? 0 : newSizeTable[slot - 1];
+        for (int i = slot; i < newSizeTable.length; i++) {
+          currentCount += newChildren[i].count;
+          newSizeTable[i] = currentCount;
+        }
+      }
+    }
+
+    // TODO: Implement node merging / rebalancing if a node becomes too small
+    // This is the complex part involving invariants. For now, just return the modified node.
+
+    // If this node now only has one child, collapse it (return the child directly)
+    if (newChildren.length == 1 && height > 0) {
+      // Only collapse if not the root node (which might be height 0 if list becomes small)
+      // Or handle root collapse at the ApexListImpl level.
+      // For simplicity here, assume we return the single child.
+      return newChildren[0];
+    }
+
+    return RrbInternalNode<E>(height, newCount, newChildren, newSizeTable);
+  }
 }
 
 /// Represents a leaf node in the RRB-Tree.
@@ -256,6 +336,20 @@ class RrbLeafNode<E> extends RrbNode<E> {
       // Parent is initially strict as children are max size or single
       return RrbInternalNode<E>(1, count + 1, [this, newLeaf], null);
     }
+  }
+
+  @override
+  RrbNode<E>? removeAt(int index) {
+    assert(index >= 0 && index < count);
+
+    if (elements.length == 1) {
+      // Removing the only element makes the leaf empty
+      return null;
+    }
+
+    // Create a new leaf node with the element removed
+    final newElements = List<E>.of(elements)..removeAt(index);
+    return RrbLeafNode<E>(newElements);
   }
 }
 
