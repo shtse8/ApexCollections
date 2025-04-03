@@ -19,16 +19,20 @@
 
 ## Current Focus
 
--   **Phase 4: Performance Optimization & Benchmarking** (Fixing `ApexMap.fromMap`, Optimizing `ApexList` conversions and bulk ops, Refining RRB-Tree `removeAt`)
+-   **Phase 4: Performance Optimization & Benchmarking** (Implementing advanced algorithms for identified bottlenecks)
 
 ## Next Immediate Steps
 
-1.  **FIX `ApexMap.fromMap` Performance:** Investigate the bottleneck in the `ApexMapImpl.fromMap` factory and implement a fix. **(Highest Priority)**
-2.  **Optimize `ApexList` Conversions:** Improve `toList` and `fromIterable` performance.
-3.  **Optimize `ApexList` Bulk/Range Operations:** Revisit `sublist`, `operator+`, `removeWhere` for node-level or transient optimizations.
-4.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case.
-5.  **Re-run Benchmarks:** After fixes and optimizations, re-run benchmarks.
-6.  **Begin Documentation:** Start writing basic API documentation.
+1.  **FIX `ApexMap.fromMap` Performance:** Research and implement a **CHAMP bulk loading algorithm** (e.g., sort + layered build) to replace the current iterative transient `add`. **(Highest Priority)**
+2.  **Implement Efficient `ApexList.concat`:** Implement the **O(log N) RRB-Tree concatenation algorithm** based on tree structure manipulation.
+3.  **Implement Efficient `ApexList.sublist`:** Implement the **O(log N) RRB-Tree slicing algorithm** based on tree structure manipulation.
+4.  **Optimize `ApexList.removeWhere`:** Ensure implementation uses an efficient approach like **transient builder filtering**.
+5.  **Optimize `ApexList` Conversions:**
+    *   Investigate **RRB-Tree bulk loading** for `fromIterable`.
+    *   Optimize `_RrbTreeIterator` or implement direct node traversal for `toList`.
+6.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case.
+7.  **Re-run Benchmarks:** After fixes and optimizations.
+8.  **Begin Documentation:** Start writing basic API documentation.
 
 ## Open Questions / Decisions
 
