@@ -1,6 +1,5 @@
 import 'package:benchmark_harness/benchmark_harness.dart';
 import 'package:fast_immutable_collections/fast_immutable_collections.dart';
-// TODO: Import fast_immutable_collections when needed
 
 // Placeholder for benchmark setup
 const int listSize = 10000; // Example size, will need various sizes
@@ -168,23 +167,25 @@ class FIC_IListIterateBenchmark extends BenchmarkBase {
   }
 }
 
-// TODO: Add benchmarks for other List operations (remove, lookup, iteration, etc.)
-// TODO: Add benchmarks for fast_immutable_collections IList operations
-
+// Placeholder for future ApexList benchmarks will go here
 // --- Main Runner ---
 
 void main() {
-  FIC_IListAddBenchmark().report();
-  print('Running List Benchmarks (Size: $listSize)...');
-  // Add benchmarks to run here
+  print('--- Running List Benchmarks (Size: $listSize) ---');
+
+  // Native List Benchmarks
+  print('\n-- Native List --');
   NativeListAddBenchmark().report();
   NativeListLookupBenchmark().report();
-  NativeListRemoveAtBenchmark().report();
+  NativeListRemoveAtBenchmark().report(); // Note: Measures copy + remove
+  NativeListIterateBenchmark().report();
+
+  // fast_immutable_collections IList Benchmarks
+  print('\n-- IList (FIC) --');
+  FIC_IListAddBenchmark().report();
   FIC_IListLookupBenchmark().report();
   FIC_IListRemoveAtBenchmark().report();
-  NativeListIterateBenchmark().report();
   FIC_IListIterateBenchmark().report();
 
-  // Add more benchmark reports here...
-  print('--------------------');
+  print('------------------------------------------');
 }

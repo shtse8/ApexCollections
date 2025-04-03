@@ -85,8 +85,7 @@ class NativeMapIterateBenchmark extends BenchmarkBase {
   }
 }
 
-// TODO: Add benchmarks for other Map operations (lookup, remove, iteration, etc.)
-
+// Placeholder for future ApexMap benchmarks will go here
 // --- fast_immutable_collections IMap Benchmarks ---
 
 class FIC_IMapAddBenchmark extends BenchmarkBase {
@@ -164,22 +163,25 @@ class FIC_IMapIterateBenchmark extends BenchmarkBase {
   }
 }
 
-// TODO: Add benchmarks for other IMap operations
-
+// Placeholder for future ApexMap benchmarks will go here
 // --- Main Runner ---
 
 void main() {
-  print('Running Map Benchmarks (Size: $mapSize)...');
-  // Add benchmarks to run here
+  print('--- Running Map Benchmarks (Size: $mapSize) ---');
+
+  // Native Map Benchmarks
+  print('\n-- Native Map --');
   NativeMapAddBenchmark().report();
-  FIC_IMapAddBenchmark().report();
   NativeMapLookupBenchmark().report();
-  FIC_IMapLookupBenchmark().report();
-  NativeMapRemoveBenchmark().report();
-  FIC_IMapRemoveBenchmark().report();
+  NativeMapRemoveBenchmark().report(); // Note: Measures copy + remove
   NativeMapIterateBenchmark().report();
+
+  // fast_immutable_collections IMap Benchmarks
+  print('\n-- IMap (FIC) --');
+  FIC_IMapAddBenchmark().report();
+  FIC_IMapLookupBenchmark().report();
+  FIC_IMapRemoveBenchmark().report();
   FIC_IMapIterateBenchmark().report();
 
-  // Add more benchmark reports here...
-  print('--------------------');
+  print('----------------------------------------');
 }
