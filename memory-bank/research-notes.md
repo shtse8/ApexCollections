@@ -84,6 +84,17 @@ Based on Bagwell/Rompf (2011) paper, Section 4:
     -   *Overall Complexity:* O(log N).
 
 
+
+### Append and Update Algorithms (Summary - 2025-04-03 ~03:01 UTC+1)
+
+Based on Bagwell/Rompf (2011) paper, Sections 1.2 & 5.1:
+
+-   **Core Mechanism:** Both operations involve copying the path from root to the affected leaf (O(log N)).
+-   **Tail/Focus Optimization (for effective constant time):
+    -   *Append:* A separate buffer (tail/focus, e.g., 32 elements) holds the last block. Appending usually copies only this buffer (O(1)). Integrating a full buffer into the main tree is O(log N), leading to amortized constant time.
+    -   *Update:* If index is in the focus block, only copy that block (O(1)). If outside, move focus (O(log N) path copy using 'display' stack) then update in focus (O(1) copy). Optimizes for spatio-temporal locality.
+
+
 ### Initial Research Tasks:
 
 -   [ ] Read and summarize the core concepts from the primary Bagwell/Rompf (2011) paper.
