@@ -64,6 +64,26 @@ Based on Peter Horne-Khan's explanation:
 -   **Propagation:** The merged/rebalanced node propagates upwards, potentially triggering merges at higher levels. Redundant root levels are removed.
 
 
+
+### Split and Insert-At Algorithms (Summary - 2025-04-03 ~03:00 UTC+1)
+
+Based on Bagwell/Rompf (2011) paper, Section 4:
+
+-   **`split(index)`:**
+    -   Implemented via left and right slicing.
+    -   *Right Slice:* Traverses down path defined by `index`, makes it the new right edge, drops nodes to the right.
+    -   *Left Slice:* Traverses down path defined by `index`, makes it the new left edge, drops nodes to the left, shifts remaining nodes left during copy.
+    -   *Lazy Balancing:* Slicing might temporarily violate the relaxed invariant; this is fixed lazily during subsequent concatenations involving the sliced parts.
+    -   *Complexity:* Stated as O(log N) overall for splits.
+-   **`insert-at(index, value)`:**
+    -   Achieved by combining split and concatenate:
+        1.  `split(index)` into `left_part`, `right_part` (O(log N)).
+        2.  Create `middle_part` (new vector with `value`) (O(1)).
+        3.  `concatenate(left_part, middle_part)` (O(log N)).
+        4.  `concatenate(result, right_part)` (O(log N)).
+    -   *Overall Complexity:* O(log N).
+
+
 ### Initial Research Tasks:
 
 -   [ ] Read and summarize the core concepts from the primary Bagwell/Rompf (2011) paper.
