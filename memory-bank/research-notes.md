@@ -268,3 +268,25 @@ Key optimizations proposed for Hash-Array Mapped Tries (HAMT) on the JVM, result
 *   Faster Equality: Implemented `hashCode`/`==` with bitmap short-circuiting. (Done)
 *   Efficient Iterators: Basic structure exists, but optimization needed (e.g., avoid temporary MapEntry). (Pending)
 *   Memoization: Not implemented. (Pending)
+
+
+### CHAMP Implementation Outcome & Pivot (2025-04-05 ~12:52 UTC+1)
+
+-   **Implementation:** A functional CHAMP-based `ApexMap` was implemented, including node structures, core operations (add, remove, update, lookup), and an iterator.
+-   **Performance Reality:**
+    -   Final benchmarks (with a correct but unoptimized iterator creating temporary `MapEntry` objects) showed significant performance issues compared to `fast_immutable_collections` (FIC), which uses HAMT:
+        -   `iterateEntries`: ~3042 us (**~2.5x slower** than FIC ~1235 us).
+        -   `toMap`: ~9099 us (Slower than FIC ~6915 us).
+        -   `add`: ~4.34 us (Slower than FIC ~0.22 us).
+        -   `lookup[]`: ~0.22 us (Slower than FIC ~0.06 us).
+        -   `fromMap`: ~8979 us (Much slower than FIC ~1830 us).
+    -   While `addAll` (~34 us), `remove` (~3.88 us), and `update` (~8.52 us) showed strong performance, the poor results for iteration, lookup, and add were major concerns.
+-   **Optimization Attempts (Iterator):**
+    -   The primary theoretical advantage of CHAMP (efficient iteration) was not realized in the initial implementation due to the overhead of creating temporary `MapEntry` objects.
+    -   Two separate attempts were made to optimize the `ChampTrieIterator` by avoiding temporary object creation (using a `_BitmapPayloadRef` helper class to store references to data within nodes).
+    -   **Both attempts failed**, introducing logic errors that caused numerous test failures. Reverting the optimization restored correctness but kept the poor iteration performance.
+-   **Conclusion & Decision:**
+    -   Despite CHAMP's theoretical advantages, achieving efficient *and* correct iteration performance in the Dart implementation proved highly complex and error-prone.
+    -   The significant performance deficit in key operations (iteration, lookup, add) compared to the main competitor (FIC/HAMT) outweighed the benefits seen in other operations (`addAll`, `remove`, `update`).
+    -   **Decision:** **Abandon CHAMP** as the underlying data structure for `ApexMap`.
+-   **Next Step:** **Pivot to researching Hash Array Mapped Tries (HAMT)** as the alternative data structure for `ApexMap`. The focus will be on understanding HAMT implementations that prioritize iteration and lookup performance, learning from existing libraries like FIC.

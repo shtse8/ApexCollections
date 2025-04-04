@@ -1,11 +1,11 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-05 ~00:37 UTC+1)
+## Current Status (Timestamp: 2025-04-05 ~12:50 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
 -   **Phase 3: Implementation & Unit Testing COMPLETE.**
--   **Phase 4: Refactoring & Debugging IN PROGRESS.**
+-   **Phase 4: Refactoring & Debugging COMPLETE.** (Core bugs fixed, iterator reverted to correct but slow version)
     -   **Refactoring:**
         -   Extracted RRB-Tree utility functions from `ApexListImpl` into `rrb_tree_utils.dart`.
         -   Refactored `ChampInternalNode` in `champ_node.dart` to separate transient/immutable logic paths.
@@ -17,25 +17,25 @@
         -   Attempted optimization of `RrbInternalNode.fromRange` (Reverted - worsened performance).
         -   Attempted optimization of `ChampInternalNode` immutable helpers using list spreads (Reverted - worsened single-element performance).
         -   **Fixed `champ_node.dart` structural errors (missing `ChampArrayNode` definition, misplaced methods).**
-        -   **Refactored `ChampTrieIterator` logic to fix test failures.**
+        -   **Refactored `ChampTrieIterator` logic to fix test failures.** (Reverted optimization attempts)
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
         -   **(Resolved)** List Test Runtime Error: The `StateError: Cannot rebalance incompatible nodes...` in `RrbInternalNode._rebalanceOrMerge` has been addressed by implementing a plan-based rebalancing strategy (`_createRebalancePlan`, `_executeRebalancePlan`) for the immutable path. All `apex_list_test.dart` tests now pass.
         -   **(Resolved)** The transient path for `_rebalanceOrMerge` (plan-based case) now uses `_executeTransientRebalancePlan` to mutate nodes in place.
         -   **(Resolved)** Persistent Dart Analyzer errors related to `ChampArrayNode` resolved by fixing `champ_node.dart` structure, clearing `.dart_tool`, and using `git stash pop`.
-        -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass.**
-    -   **Performance Status (Updated 2025-04-05 ~00:37 UTC+1 - After optimizing `_buildNode`):**
+        -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass with the reverted (slower) iterator.**
+    -   **Performance Status (Updated 2025-04-05 ~12:50 UTC+1 - After reverting iterator optimization):**
         -   **ApexMap (Size: 10k):**
-            -   `add`: ~4.29 us (Stable, slower than Native/FIC)
-            -   `addAll`: ~32.46 us (Stable, Excellent)
+            -   `add`: ~4.34 us (Stable, slower than Native/FIC)
+            -   `addAll`: ~34.00 us (Stable, Excellent)
             -   `lookup[]`: ~0.22 us (Stable, slower than Native/FIC)
-            -   `remove`: ~3.87 us (Stable, much faster than FIC)
-            -   `update`: ~8.55 us (Stable, faster than FIC)
-            -   `iterateEntries`: ~2995.64 us (Slow but slightly improved)
-            -   `toMap`: ~8985.92 us (Slow but slightly improved)
-            -   `fromMap`: ~8821.62 us (**Improved!** Was ~9719us after reset)
-            -   *Conclusion:* Optimizing the second pass of the `_buildNode` helper in `ApexMapImpl.fromMap` significantly improved its performance. Iteration and `toMap` also saw slight improvements. Other operations remain stable.
+            -   `remove`: ~3.88 us (Stable, much faster than FIC)
+            -   `update`: ~8.52 us (Stable, faster than FIC)
+            -   `iterateEntries`: **~3042 us** (Stable, but **~2.5x slower than FIC** ~1235 us)
+            -   `toMap`: **~9099 us** (Stable, but slower than FIC ~6915 us)
+            -   `fromMap`: ~8979 us (Stable, improved from initial, but much slower than FIC ~1830 us)
+            -   *Conclusion:* While `addAll`, `remove`, and `update` show strong performance compared to FIC, the critical `iterateEntries` operation is significantly slower (~2.5x). `add`, `lookup`, and `fromMap` also lag behind FIC. The CHAMP data structure, despite theoretical advantages, has proven difficult to optimize for iteration performance in our Dart implementation.
         -   **ApexList (Size: 10k):** (No recent changes)
             -   `add`: ~26.74 us (Stable, much faster than FIC)
             -   `addAll`: ~32.34 us (Stable, Excellent)
@@ -54,26 +54,31 @@
 -   **ApexList:** Core logic stable.
 -   **ApexMap:** Fixed structural errors in `champ_node.dart`. Updated Dartdocs.
 -   **Testing:** Refactored `ChampTrieIterator` to fix map test failures. **All tests now pass.**
--   **Benchmarking:** Attempted several `ApexMap` iterator optimizations (state machine, List stack, reduced bitCount calls) - all failed and were reverted. Attempted element hash code consolidation - failed and reverted. Optimized `ApexMapImpl._buildNode` second pass - **Success! `fromMap` improved.**
+-   **Benchmarking:** Attempted several `ApexMap` iterator optimizations (state machine, List stack, reduced bitCount calls, `_BitmapPayloadRef` to avoid temporary `MapEntry`) - **all failed due to introducing logic errors and were reverted.** Attempted element hash code consolidation - failed and reverted. Optimized `ApexMapImpl._buildNode` second pass - Success (`fromMap` improved). **Final benchmarks run with the correct but unoptimized iterator.**
 -   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap` based on latest changes and benchmarks.
 
 ## Next Immediate Steps
 
-1.  **(DONE)** Fix `champ_node.dart` structural errors (missing `ChampArrayNode`, misplaced methods).
-2.  **(DONE)** Resolve persistent Dart Analyzer errors via cache clearing and `git stash`.
+1.  **(DONE)** Fix `champ_node.dart` structural errors.
+2.  **(DONE)** Resolve persistent Dart Analyzer errors.
 3.  **(DONE)** Update `ApexList` Dartdocs.
 4.  **(DONE)** Update `ApexMap` Dartdocs.
-5.  **(DONE)** Re-run benchmarks for `ApexMap` and `ApexList`.
-6.  **(DONE)** Refactor `ChampTrieIterator` and verify all tests pass.
-7.  **(DONE)** Re-run benchmarks again to confirm results.
-8.  **(DONE)** Attempt iterator optimizations (reverted).
-9.  **(DONE)** Attempt element hash code consolidation (reverted).
-10. **(DONE)** Optimize `ApexMapImpl._buildNode` second pass.
-11. **(DONE)** Update Memory Bank: Reflect successful `_buildNode` optimization.
-12. **Commit Changes:** Commit the `_buildNode` optimization. (Next Step)
-13. **Decide Next:** Proceed to Phase 5 (Docs) or further optimization?
+5.  **(DONE)** Re-run benchmarks (initial).
+6.  **(DONE)** Refactor `ChampTrieIterator` (initial fix).
+7.  **(DONE)** Re-run benchmarks (confirmed slow iteration).
+8.  **(DONE)** Attempt iterator optimization (`_BitmapPayloadRef`) - Failed (logic errors).
+9.  **(DONE)** Revert iterator optimization attempt.
+10. **(DONE)** Attempt iterator optimization (`_BitmapPayloadRef` - 2nd try) - Failed (logic errors).
+11. **(DONE)** Revert iterator optimization attempt (using `write_to_file`).
+12. **(DONE)** Verify tests pass with reverted iterator.
+13. **(DONE)** Run final benchmarks with correct (but slow) iterator.
+14. **Update Memory Bank:** Reflect final CHAMP benchmarks and decision. (This step)
+15. **Commit Changes:** Commit the current working state (correct but slow iterator).
+16. **Strategic Pivot:** Based on persistent iteration performance issues and failed optimization attempts, **abandon CHAMP** as the underlying structure for `ApexMap`.
+17. **Research HAMT:** Begin research into Hash Array Mapped Tries (HAMT) as the alternative data structure, focusing on implementations optimized for iteration and lookup performance in Dart/JVM/JS environments.
 
 ## Open Questions / Decisions
 
 -   Need for transient/mutable builders? (Decision remains: Low priority for Map, explore for List later)
--   Further `ApexMap` single-op/iteration/`toMap` optimization? (Decision: Deferred for now after multiple failed attempts)
+-   Further `ApexMap` CHAMP optimization? **(Decision: Abandoned due to persistent iteration performance issues and complexity)**
+-   How to best approach HAMT research and implementation for `ApexMap`?

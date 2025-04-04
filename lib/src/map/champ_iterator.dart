@@ -7,7 +7,7 @@ import 'champ_node.dart' as champ;
 /// Efficient iterator for traversing the CHAMP Trie using a simplified stack approach.
 class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
   // Use a Queue as a stack for easier adding/removing from the front (LIFO)
-  // Store nodes or entries directly.
+  // Store nodes or collision entries. Data entries from BitmapNodes are created temporarily.
   final Queue<Object> _stack = Queue<Object>();
 
   K? _currentKey;
@@ -36,13 +36,13 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
       final element = _stack.removeFirst(); // Pop from stack
 
       if (element is champ.ChampDataNode<K, V>) {
-        // Found a data node directly
+        // Found a standalone data node
         _currentKey = element.dataKey;
         _currentValue = element.dataValue;
         _hasCurrent = true;
         return true;
       } else if (element is MapEntry<K, V>) {
-        // Found an entry from a CollisionNode
+        // Found an entry directly from a CollisionNode
         _currentKey = element.key;
         _currentValue = element.value;
         _hasCurrent = true;
@@ -96,7 +96,7 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
             final payloadIndex = champ.contentIndexFromDataIndex(dataIndex);
             // Check bounds before accessing list
             if (payloadIndex >= 0 && payloadIndex + 1 < list.length) {
-              // Create a temporary MapEntry to push onto the stack
+              // Create temporary MapEntry again
               final key = list[payloadIndex] as K;
               final value = list[payloadIndex + 1] as V;
               _stack.addFirst(MapEntry(key, value));
