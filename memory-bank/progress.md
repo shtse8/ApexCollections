@@ -1,11 +1,12 @@
 # Progress: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~21:39 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~06:15 UTC+1)
 
 **Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established.
 **Phase 2: Core Design & API Definition COMPLETE.** Public APIs for `ApexList` and `ApexMap` defined. Core node structure files outlined. Basic implementation classes created. `toMap` added to `ApexMap`.
 **Phase 3: Implementation & Unit Testing COMPLETE** (Excluding deferred `removeAt` debugging). Core logic for `ApexListImpl` and `ApexMapImpl` implemented and unit tested. Transient logic refined. `toMap` implemented in `ApexMapImpl`.
-**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** Benchmarks updated. `ApexMap.fromMap` remains critical issue (multiple attempts failed). `ApexList.concat` and `ApexList.sublist` optimized. Other `ApexList` ops still need work.
+**Phase 4: Refactoring & Debugging IN PROGRESS.** File writing issues resolved. Map test failures fixed. `ApexMap.fromMap` performance addressed. `ApexList.toList` refactored. `ApexList` rebalancing bug remains.
+**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** `ApexMap.fromMap` optimized. `ApexList.toList` refactored (needs benchmarking). `ApexList.fromIterable` needs optimization.
 
 ## What Works
 
@@ -13,11 +14,11 @@
 -   Core Memory Bank files established and updated.
 -   Basic Dart package structure confirmed (`pubspec.yaml`, etc.).
 -   Public API definitions for `ApexList` (`lib/src/list/apex_list_api.dart`) and `ApexMap` (`lib/src/map/apex_map_api.dart`).
--   Node structures implemented for RRB-Trees (`lib/src/list/rrb_node.dart`) and CHAMP Tries (`lib/src/map/champ_node.dart`), including transient mutation logic.
--   `ApexMapImpl` methods implemented, using transient operations for bulk methods. Shows strong performance for modifications/iteration and `toMap`. `fromMap` reverted to iterative add due to failed bulk load attempts.
--   `ApexListImpl` methods implemented. `addAll` uses transient logic. `operator+` uses efficient O(log N) concatenation. `removeWhere` reverted to immutable filter. `sublist` uses efficient O(log N) tree slicing. `toList` reverted to recursive helper.
--   Efficient iterators implemented for `ApexMapImpl` (`_ChampTrieIterator`) and `ApexListImpl` (`_RrbTreeIterator`).
--   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases.
+-   Node structures implemented for RRB-Trees (`lib/src/list/rrb_node.dart`) and CHAMP Tries (`lib/src/map/champ_node.dart`), including transient mutation logic. **(Refactored)**
+-   `ApexMapImpl` methods implemented, using transient operations for bulk methods. `fromMap` uses efficient O(N) recursive bulk loading. Shows strong performance for modifications/iteration and `toMap`.
+-   `ApexListImpl` methods implemented. `addAll` uses transient logic. `operator+` uses efficient O(log N) concatenation. `removeWhere` reverted to immutable filter. `sublist` uses efficient O(log N) tree slicing. `toList` refactored to use iterator. **(Refactored - utils extracted)**
+-   Efficient iterators implemented for `ApexMapImpl` (`lib/src/map/champ_iterator.dart`) and `ApexListImpl` (`_RrbTreeIterator`). **(Map iterator extracted)**
+-   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases. `ApexMap` tests pass. `ApexList` tests fail due to known `removeAt` issue.
 -   Benchmark suite created (`benchmark/`) comparing `ApexList`/`ApexMap` against native and FIC collections. Conversion benchmarks added. Latest results gathered.
 
 ## What's Left to Build (High-Level)
@@ -25,25 +26,26 @@
 -   **Phase 1:** Research & Benchmarking **(DONE)**
 -   **Phase 2:** Core Design & API Definition **(DONE)**
 -   **Phase 3:** Implementation & Unit Testing **(DONE - Known Issue Deferred)**
--   **Phase 4:** Performance Optimization & Benchmarking **(IN PROGRESS)**
+-   **Phase 4:** Refactoring & Debugging **(IN PROGRESS - List `removeAt` bug)**
+-   **Phase 4:** Performance Optimization & Benchmarking **(IN PROGRESS - List `fromIterable`, Benchmarking)**
 -   **Phase 5:** Documentation & Examples (GitHub Pages, `dart doc`).
 -   **Phase 6:** CI/CD & Publishing (`pub.dev`).
 
 ## Known Issues / Blockers
 
--   **CRITICAL:** `ApexMap.fromMap` performance is extremely poor. Bulk loading attempts failed. Reverted to iterative add.
--   `ApexList.sublist` performance is now **excellent** (O(log N) tree slicing). **(FIXED)**
--   `ApexList.fromIterable` performance (`~1760 us`) is slow compared to FIC (`~650 us`). Bottom-up transient build is better than iterative add, but needs further optimization.
--   `ApexList.toList` performance (`~880 us`) using recursive helper is slower than FIC (`~620 us`). Iterator approach was slower.
--   `ApexMap` single `add`/`lookup` performance is slower than competitors.
--   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` now handles the "Cannot steal" edge case via merge-split (immutable path only). Transient path still needs implementation. **(Partially Addressed - Lower Priority)**
+-   **(Resolved)** File writing tool issues.
+-   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error).
+-   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Requires significant refactor of rebalancing logic.
+-   **(Resolved)** `ApexMap.fromMap` performance issue addressed with O(N) bulk loading.
+-   `ApexList.fromIterable` performance (`~1760 us`) needs optimization (avoid `sublist`).
+-   `ApexList.toList` performance (`~880 us`) potentially improved by using iterator (needs benchmarking).
+-   `ApexMap` single `add`/`lookup` performance is acceptable but slower than competitors (lower priority).
+-   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed and requires redesign. Transient path remains unimplemented.
 
-## Next Milestones (Phase 4 Continuation)
+## Next Milestones
 
-1.  **FIX `ApexMap.fromMap` Performance:** Dedicated investigation/debugging of bulk loading. **(Highest Priority)**
-2.  **Optimize `ApexList.sublist`:** **DONE.**
-3.  **Optimize `ApexList.fromIterable`:** Reverted iterative transient add. Bottom-up transient build needs further optimization.
-4.  **Optimize `ApexList.toList`:** Recursive helper is current best, but further optimization needed.
-5.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** **DONE (Immutable Path).** Transient path still needs implementation.
-6.  **(Lower Priority) Investigate `ApexMap` `add`/`lookup`:** Explore micro-optimizations.
-7.  **Begin Documentation:** **IN PROGRESS.** Updated `ApexList` and `ApexMap` API docs (complexity notes, known issues).
+1.  **(Lower Priority / Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
+2.  **(Lower Priority)** **Optimize `ApexList.fromIterable`:** Implement O(N) bulk loading (requires node changes).
+3.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap` and `ApexList.toList`.
+4.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
+5.  **Continue Documentation:** Update API docs and Memory Bank based on recent changes.

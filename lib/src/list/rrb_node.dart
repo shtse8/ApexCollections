@@ -141,23 +141,49 @@ class RrbInternalNode<E> extends RrbNode<E> {
   /// This list is mutable only if the node is transient.
   List<int>? sizeTable;
 
-  /// Creates an internal RRB-Tree node.
+  /// Creates an internal RRB-Tree node, copying a range of children from an input list.
+  /// Used primarily by the bulk loader (`ApexListImpl.fromIterable`).
   ///
   /// - [height]: The height of this node (must be > 0).
   /// - [count]: The total number of elements in the subtree rooted here.
-  /// - [children]: The list of child nodes.
-  /// - [sizeTable]: Optional cumulative size table if the node is relaxed.
+  /// - [childrenInput]: The list containing child nodes from the previous level.
+  /// - [start]: The starting index (inclusive) in [childrenInput] for this node's children.
+  /// - [end]: The ending index (exclusive) in [childrenInput] for this node's children.
+  /// - [sizeTable]: Optional cumulative size table if the node is relaxed (must match the range length).
   /// - [owner]: Optional [TransientOwner] if creating a mutable transient node.
   ///
-  /// If an [owner] is provided, the [children] and [sizeTable] lists are kept
-  /// mutable. Otherwise, they are converted to unmodifiable lists.
+  /// If an [owner] is provided, the internal [children] list is created as a mutable
+  /// copy of the specified range. Otherwise, it's created as an unmodifiable copy.
+  factory RrbInternalNode.fromRange(
+    int height,
+    int count,
+    List<RrbNode<E>> childrenInput,
+    int start,
+    int end, [
+    List<int>?
+    sizeTable, // Size table corresponds to the children *within the range*
+    TransientOwner? owner,
+  ]) {
+    final childrenList = List<RrbNode<E>>.of(
+      childrenInput.getRange(start, end), // Copy the relevant range
+      growable: owner != null, // Growable only if transient
+    );
+    // Use the default constructor with the prepared children list
+    return RrbInternalNode<E>(height, count, childrenList, sizeTable, owner);
+  }
+
+  /// Creates an internal node directly from a given list of children (e.g., for splitting, merging).
+  /// Use `RrbInternalNode.fromRange` for bulk loading.
   RrbInternalNode(
     this.height,
     this.count,
     List<RrbNode<E>> children, [
     List<int>? sizeTable,
     TransientOwner? owner,
-  ]) : children = (owner != null) ? children : List.unmodifiable(children),
+  ]) : children =
+           (owner != null)
+               ? children
+               : List.unmodifiable(children), // Use list directly
        sizeTable =
            (owner != null || sizeTable == null)
                ? sizeTable
@@ -255,6 +281,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
     // Note: Size table doesn't change on update, only counts within children might
     // Recompute size table status if it wasn't relaxed before, but might need to be now.
     final finalSizeTable = _computeSizeTableIfNeeded(newChildren) ?? sizeTable;
+    // Use default constructor as we created a full copy of children
     return RrbInternalNode<E>(height, count, newChildren, finalSizeTable);
   }
 
@@ -306,6 +333,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
         // Check if the new structure requires relaxation
         final finalSizeTable =
             _computeSizeTableIfNeeded(newChildren) ?? newSizeTable;
+        // Use default constructor
         return RrbInternalNode<E>(
           height,
           newCount,
@@ -315,13 +343,14 @@ class RrbInternalNode<E> extends RrbNode<E> {
       } else {
         // Node needs to split
         final newNodeList = [nodeToAdd];
+        // Use default constructor
         final newParentInternal = RrbInternalNode<E>(
           height,
           nodeToAdd.count,
-          newNodeList,
-          null,
-        ); // New node is strict
-        // Create new parent
+          newNodeList, // Pass the list directly
+          null, // New node is strict
+        );
+        // Create new parent using default constructor
         return RrbInternalNode<E>(height + 1, newCount, [
           this,
           newParentInternal,
@@ -338,6 +367,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
       // Check if the new structure requires relaxation
       final finalSizeTable =
           _computeSizeTableIfNeeded(newChildren) ?? newSizeTable;
+      // Use default constructor
       return RrbInternalNode<E>(height, newCount, newChildren, finalSizeTable);
     }
   }
@@ -496,8 +526,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
         // Immutable rebalancing needed here if child underfull
         const minSize =
             (kBranchingFactor + 1) ~/ 2; // Or calculate based on height?
-        if (newChild!.count < minSize && tempChildren.length > 1) {
-          // Use newChild! as it's not null here
+        if (newChild.count < minSize && tempChildren.length > 1) {
           final result = _rebalanceOrMerge(
             slot,
             tempChildren,
@@ -506,12 +535,10 @@ class RrbInternalNode<E> extends RrbNode<E> {
           );
           tempChildren = result.$1;
           tempSizeTable = result.$2;
-          tempChildren = result.$1;
-          tempSizeTable = result.$2;
           // Note: Immutable rebalance would need to return new lists. For now, this will throw.
         }
       }
-      // --- Final checks (No Rebalancing Yet) ---
+      // --- Final checks (Original logic before last attempt) ---
       if (tempChildren.length == 1 && height > 0) {
         // Check if the single child itself needs collapsing (height mismatch)
         // This handles the case where the recursive call collapsed the child
@@ -528,10 +555,14 @@ class RrbInternalNode<E> extends RrbNode<E> {
       }
 
       // Return new node without rebalancing, recalculate size table if needed
+      // Use the potentially updated tempSizeTable from rebalancing/merging
+      // Recalculate only if it was null *before* rebalancing and might be needed now,
+      // or if the original node was relaxed (implying it might still need one).
       final finalSizeTable =
           (tempSizeTable != null || isRelaxed)
-              ? _computeSizeTableIfNeeded(tempChildren)
+              ? (tempSizeTable ?? _computeSizeTableIfNeeded(tempChildren))
               : null;
+      // Use default constructor
       return RrbInternalNode<E>(height, newCount, tempChildren, finalSizeTable);
     }
   } // End of removeAt
@@ -676,6 +707,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
       }
       final finalSizeTable =
           _computeSizeTableIfNeeded(newChildren) ?? newSizeTable;
+      // Use default constructor
       return RrbInternalNode<E>(height, newCount, newChildren, finalSizeTable);
     } else {
       // Child split, creating a new internal node of the same height
@@ -697,6 +729,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
       if (newChildren.length <= kBranchingFactor) {
         // No need for parent split, just update size table if needed
         final newSizeTable = _computeSizeTableIfNeeded(newChildren);
+        // Use default constructor
         return RrbInternalNode<E>(height, newCount, newChildren, newSizeTable);
       } else {
         // This node needs to split as well
@@ -710,19 +743,21 @@ class RrbInternalNode<E> extends RrbNode<E> {
             leftSizeTable?.last ??
             leftChildren.fold<int>(0, (sum, node) => sum + (node.count ?? 0));
         int rightCount = newCount - leftCount;
+        // Use default constructor
         final newLeftNode = RrbInternalNode<E>(
           height,
           leftCount,
           leftChildren,
           leftSizeTable,
         );
+        // Use default constructor
         final newRightNode = RrbInternalNode<E>(
           height,
           rightCount,
           rightChildren,
           rightSizeTable,
         );
-        // Create new parent
+        // Create new parent using default constructor
         return RrbInternalNode<E>(height + 1, newCount, [
           newLeftNode,
           newRightNode,
@@ -737,7 +772,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
     if (isTransient(owner)) {
       return this;
     }
-    // Create a mutable copy with the new owner
+    // Create a mutable copy with the new owner using default constructor
     return RrbInternalNode<E>(
       height,
       count,
@@ -821,39 +856,22 @@ class RrbInternalNode<E> extends RrbNode<E> {
       ); // Return original lists as no action was needed
     }
 
-    print(
-      'DEBUG: _rebalanceOrMerge triggered for slot $slot. Node1 count: ${node1.count}, Node2 count: ${node2.count}, Combined: $combinedCount, CanMerge: $canMerge',
-    );
+    // Removed debug print
 
     if (owner != null) {
       // --- Transient Path ---
-      if (canMerge) {
-        // TODO: Implement transient merge logic
-        // 1. Combine children/elements of node1 and node2 into node1.
-        // 2. Remove node2 from the children list.
-        // 3. Update sizeTable if present.
-        print('Transient Merge logic needed for slot $slot');
-        throw UnimplementedError('Transient Merge not implemented');
-      } else {
-        // TODO: Implement transient steal logic (rebalance)
-        // 1. Determine direction (steal from left or right neighbor - this function only handles right neighbor `slot+1`).
-        // 2. Move one child/element from node2 to node1.
-        // 3. Update counts of node1 and node2.
-        // 4. Update sizeTable if present.
-        print('Transient Steal logic needed for slot $slot');
-        throw UnimplementedError('Transient Steal not implemented');
-      }
-      // Remember to update parent count (handled in removeAt)
+      // TODO: Implement transient merge/steal logic
+      throw UnimplementedError('Transient rebalance/merge not implemented');
     } else {
       // --- Immutable Path ---
       if (canMerge) {
         // Immutable Merge Logic
-        print('Attempting Immutable Merge for slot $slot');
         RrbNode<E> newMergedNode;
 
         if (node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) {
           // Merge two leaf nodes
           final combinedElements = [...node1.elements, ...node2.elements];
+          // Use default constructor
           newMergedNode = RrbLeafNode<E>(combinedElements);
         } else if (node1 is RrbInternalNode<E> &&
             node2 is RrbInternalNode<E> &&
@@ -864,6 +882,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
           final newMergedNodeSizeTable = _computeSizeTableIfNeeded(
             combinedChildren,
           );
+          // Use default constructor
           newMergedNode = RrbInternalNode<E>(
             node1.height, // Height remains the same
             combinedCount,
@@ -888,21 +907,13 @@ class RrbInternalNode<E> extends RrbNode<E> {
         // Recalculate parent's size table (important!)
         final newParentSizeTable = _computeSizeTableIfNeeded(newParentChildren);
 
-        // TODO: Modify removeAt to accept and use these new lists
-        print(
-          'Immutable Merge completed (logic only). New children count: ${newParentChildren.length}',
-        );
-
         // Return the new lists for the immutable path
         return (newParentChildren, newParentSizeTable);
       } else {
         // Immutable Steal Logic (Rebalance)
-        print('Attempting Immutable Steal for slot $slot');
-
         // Simplified: Assume we always steal from right (node2) to left (node1) if node1 is underfull.
         // A full implementation would check node2 size and potentially steal from left neighbor if needed.
         if (node1.count < minSize && node2.count > minSize) {
-          print('Stealing from node2 to node1');
           RrbNode<E> newNode1;
           RrbNode<E> newNode2;
 
@@ -912,7 +923,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
             final newNode1Elements = [...node1.elements, elementToSteal];
             final newNode2Elements = node2.elements.sublist(1);
 
+            // Use default constructor
             newNode1 = RrbLeafNode<E>(newNode1Elements);
+            // Use default constructor
             newNode2 = RrbLeafNode<E>(newNode2Elements);
           } else if (node1 is RrbInternalNode<E> &&
               node2 is RrbInternalNode<E> &&
@@ -932,12 +945,14 @@ class RrbInternalNode<E> extends RrbNode<E> {
               newNode2Children,
             );
 
+            // Use default constructor
             newNode1 = RrbInternalNode<E>(
               node1.height,
               newNode1Count,
               newNode1Children,
               newNode1SizeTable,
             );
+            // Use default constructor
             newNode2 = RrbInternalNode<E>(
               node2.height,
               newNode2Count,
@@ -961,10 +976,8 @@ class RrbInternalNode<E> extends RrbNode<E> {
             newParentChildren,
           );
 
-          print('Immutable Steal (right-to-left) completed.');
           return (newParentChildren, newParentSizeTable);
         } else if (node2.count < minSize && node1.count > minSize) {
-          print('Stealing from node1 to node2');
           RrbNode<E> newNode1;
           RrbNode<E> newNode2;
 
@@ -977,7 +990,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
             );
             final newNode2Elements = [elementToSteal, ...node2.elements];
 
+            // Use default constructor
             newNode1 = RrbLeafNode<E>(newNode1Elements);
+            // Use default constructor
             newNode2 = RrbLeafNode<E>(newNode2Elements);
           } else if (node1 is RrbInternalNode<E> &&
               node2 is RrbInternalNode<E> &&
@@ -1000,12 +1015,14 @@ class RrbInternalNode<E> extends RrbNode<E> {
               newNode2Children,
             );
 
+            // Use default constructor
             newNode1 = RrbInternalNode<E>(
               node1.height,
               newNode1Count,
               newNode1Children,
               newNode1SizeTable,
             );
+            // Use default constructor
             newNode2 = RrbInternalNode<E>(
               node2.height,
               newNode2Count,
@@ -1029,23 +1046,21 @@ class RrbInternalNode<E> extends RrbNode<E> {
             newParentChildren,
           );
 
-          print('Immutable Steal (left-to-right) completed.');
           return (newParentChildren, newParentSizeTable);
         } else {
           // Cannot steal: Merge the two nodes even if oversized, then split.
-          print('Cannot steal for slot $slot - Performing Merge-Split.');
-
           // 1. Merge node1 and node2 (similar to 'canMerge' logic)
           RrbNode<E> mergedNode;
           if (node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) {
             final combinedElements = [...node1.elements, ...node2.elements];
-            // Create potentially oversized leaf
+            // Create potentially oversized leaf using default constructor
             mergedNode = RrbLeafNode<E>(combinedElements);
           } else if (node1 is RrbInternalNode<E> &&
               node2 is RrbInternalNode<E> &&
               node1.height == node2.height) {
             final combinedChildren = [...node1.children, ...node2.children];
             // Create potentially oversized internal node (size table calculated later)
+            // Use default constructor
             mergedNode = RrbInternalNode<E>(
               node1.height,
               combinedCount,
@@ -1065,7 +1080,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
             final splitPoint = (mergedNode.elements.length + 1) ~/ 2;
             final leftElements = mergedNode.elements.sublist(0, splitPoint);
             final rightElements = mergedNode.elements.sublist(splitPoint);
+            // Use default constructor
             newNode1 = RrbLeafNode<E>(leftElements);
+            // Use default constructor
             newNode2 = RrbLeafNode<E>(rightElements);
           } else if (mergedNode is RrbInternalNode<E>) {
             final splitPoint = (mergedNode.children.length + 1) ~/ 2;
@@ -1086,12 +1103,14 @@ class RrbInternalNode<E> extends RrbNode<E> {
                 combinedCount -
                 (newNode1Count ?? 0); // Use default if newNode1Count is null
 
+            // Use default constructor
             newNode1 = RrbInternalNode<E>(
               mergedNode.height,
               newNode1Count ?? 0,
               leftChildren,
               newNode1SizeTable,
             );
+            // Use default constructor
             newNode2 = RrbInternalNode<E>(
               mergedNode.height,
               newNode2Count,
@@ -1113,11 +1132,8 @@ class RrbInternalNode<E> extends RrbNode<E> {
             newParentChildren,
           );
 
-          print('Immutable Merge-Split completed.');
           return (newParentChildren, newParentSizeTable);
         }
-        // Fallback throw if no steal logic path was taken (shouldn't happen with current checks)
-        // throw UnimplementedError('Immutable Steal logic path missed');
       }
     }
   }
@@ -1142,23 +1158,49 @@ class RrbLeafNode<E> extends RrbNode<E> {
     null,
   );
 
-  /// Creates a leaf RRB-Tree node.
+  /// Creates a leaf RRB-Tree node, potentially copying a range from a source list.
+  /// Used primarily by the bulk loader (`ApexListImpl.fromIterable`).
   ///
-  /// - [elements]: The list of elements for this leaf. Must not exceed [kBranchingFactor].
+  /// - [sourceList]: The source list containing the elements.
+  /// - [start]: The starting index (inclusive) in [sourceList].
+  /// - [end]: The ending index (exclusive) in [sourceList].
   /// - [owner]: Optional [TransientOwner] if creating a mutable transient node.
   ///
-  /// If an [owner] is provided, the [elements] list is kept mutable.
-  /// Otherwise, it is converted to an unmodifiable list.
+  /// If an [owner] is provided, the internal [elements] list is created as a mutable
+  /// copy of the specified range. Otherwise, it's created as an unmodifiable copy.
+  factory RrbLeafNode.fromRange(
+    List<E> sourceList,
+    int start,
+    int end, [
+    TransientOwner? owner,
+  ]) {
+    final rangeLength = end - start;
+    assert(rangeLength >= 0 && rangeLength <= kBranchingFactor);
+    // Use getRange for potentially better performance than sublist + List.of
+    final elementsList = List<E>.generate(
+      rangeLength,
+      (i) => sourceList[start + i],
+      growable: owner != null, // Growable only if transient
+    );
+    // Use internal constructor to assign the prepared list
+    return RrbLeafNode<E>._internal(elementsList, owner);
+  }
+
+  /// Creates a leaf node directly from a given list (e.g., for splitting).
+  /// Use `RrbLeafNode.fromRange` for bulk loading.
   RrbLeafNode(List<E> elements, [TransientOwner? owner])
     : elements =
           (owner != null || elements.isEmpty)
-              ? elements
-              : List.unmodifiable(elements),
+              ? elements // Use directly if transient or empty
+              : List.unmodifiable(elements), // Make immutable otherwise
       assert(elements.length <= kBranchingFactor),
       super(owner);
 
-  /// Internal constructor used only for the canonical empty instance.
-  RrbLeafNode._internal(this.elements, TransientOwner? owner) : super(owner);
+  /// Internal constructor used for empty instance, ensureMutable, and fromRange.
+  /// Takes an already prepared list (e.g., const [], mutable copy, or range copy).
+  RrbLeafNode._internal(List<E> preparedElements, TransientOwner? owner)
+    : elements = preparedElements, // Assign directly
+      super(owner);
 
   @override
   E get(int index) {
@@ -1174,6 +1216,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
     }
     final newElements = List<E>.of(elements);
     newElements[index] = value;
+    // Use default constructor
     return RrbLeafNode<E>(newElements);
   }
 
@@ -1181,11 +1224,14 @@ class RrbLeafNode<E> extends RrbNode<E> {
   RrbNode<E> add(E value) {
     if (elements.length < kBranchingFactor) {
       final newElements = List<E>.of(elements)..add(value);
+      // Use default constructor
       return RrbLeafNode<E>(newElements);
     } else {
       // Leaf is full, split into a new parent internal node
+      // Use default constructor
       final newLeaf = RrbLeafNode<E>([value]);
       // New parent has height 1, count = old count + 1, children = [this, newLeaf]
+      // Use default constructor
       return RrbInternalNode<E>(1, count + 1, [this, newLeaf], null);
     }
   }
@@ -1211,7 +1257,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
         return null;
       }
       final newElements = List<E>.of(elements)..removeAt(index);
-      // Return a new immutable leaf node
+      // Return a new immutable leaf node using default constructor
       return RrbLeafNode<E>(newElements, null);
     }
   }
@@ -1223,6 +1269,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
     if (elements.length < kBranchingFactor) {
       // Leaf has space, insert directly
       final newElements = List<E>.of(elements)..insert(index, value);
+      // Use default constructor
       return RrbLeafNode<E>(newElements);
     } else {
       // Leaf is full, needs to split
@@ -1230,9 +1277,11 @@ class RrbLeafNode<E> extends RrbNode<E> {
       final splitPoint = (kBranchingFactor + 1) ~/ 2;
       final leftElements = tempElements.sublist(0, splitPoint);
       final rightElements = tempElements.sublist(splitPoint);
+      // Use default constructor
       final newLeftLeaf = RrbLeafNode<E>(leftElements);
+      // Use default constructor
       final newRightLeaf = RrbLeafNode<E>(rightElements);
-      // Create new parent internal node
+      // Create new parent internal node using default constructor
       return RrbInternalNode<E>(1, count + 1, [
         newLeftLeaf,
         newRightLeaf,
@@ -1246,8 +1295,11 @@ class RrbLeafNode<E> extends RrbNode<E> {
     if (isTransient(owner)) {
       return this;
     }
-    // Create a mutable copy with the new owner
-    return RrbLeafNode<E>(List<E>.of(elements), owner);
+    // Create a mutable copy of the current elements list using the internal constructor
+    return RrbLeafNode<E>._internal(
+      List<E>.of(elements, growable: true), // Ensure the list is growable
+      owner,
+    );
   }
 
   @override

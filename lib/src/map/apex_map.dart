@@ -2,6 +2,7 @@ import 'package:collection/collection.dart'
     as collection; // For equality, mixins, bitCount
 import 'apex_map_api.dart';
 import 'champ_node.dart' as champ; // Use prefix for clarity and constants
+import 'champ_iterator.dart'; // Import the extracted iterator
 
 /// Concrete implementation of [ApexMap] using a CHAMP Trie.
 class ApexMapImpl<K, V> extends ApexMap<K, V> {
@@ -22,8 +23,17 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   );
 
   /// Public accessor for the canonical empty instance.
-  static ApexMapImpl<K, V> emptyInstance<K, V>() =>
-      _emptyInstance as ApexMapImpl<K, V>; // Cast the const instance
+  static ApexMapImpl<K, V> emptyInstance<K, V>() {
+    // If the requested types are Never, return the canonical singleton directly.
+    if (K == Never && V == Never) {
+      return _emptyInstance as ApexMapImpl<K, V>;
+    }
+    // Otherwise, return a new instance with the correct generic types,
+    // but still using the singleton ChampEmptyNode internally.
+    // This avoids type errors when calling methods like 'add' on an empty map
+    // that was created with specific non-Never types.
+    return ApexMapImpl<K, V>._(champ.ChampEmptyNode(), 0);
+  }
 
   /// Internal constructor. Cannot be const due to mutable _cachedHashCode.
   ApexMapImpl._(this._root, this._length) : _cachedHashCode = null;
@@ -31,40 +41,108 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   /// Factory constructor to create from a Map.
   factory ApexMapImpl.fromMap(Map<K, V> map) {
     if (map.isEmpty) {
-      // Return the canonical empty instance via the getter
       return emptyInstance<K, V>();
     }
-    // Use transient building for efficiency
+
+    // Convert map entries to a list for processing
+    final entries = map.entries.toList();
     final owner = champ.TransientOwner();
-    // Start with a null root, create the first node on the first iteration
-    champ.ChampNode<K, V>? root;
-    int count = 0;
 
-    map.forEach((key, value) {
-      if (root == null) {
-        // First element: create the initial DataNode directly
-        root = champ.ChampDataNode<K, V>(key.hashCode, key, value);
-        count = 1; // Initialize count
-      } else {
-        // Subsequent elements: add to the existing root using transient owner
-        final result = root!.add(key, value, key.hashCode, 0, owner);
-        root = result.node; // Update root reference
-        if (result.didAdd) {
-          count++;
-        }
-      }
-    });
+    // Build the CHAMP trie recursively using the efficient bulk loading strategy
+    final rootNode = _buildNode(entries, 0, owner);
 
-    // If the map was empty after all, root will be null. Return canonical empty.
-    if (root == null) {
-      return emptyInstance<K, V>();
+    // Freeze the potentially transient root node
+    final frozenRoot = rootNode.freeze(owner);
+
+    // Return the new ApexMapImpl instance
+    // The count is simply the number of unique entries from the original map
+    // Note: This assumes the input map doesn't have duplicate keys,
+    // which is guaranteed by the Map contract.
+    return ApexMapImpl._(frozenRoot, map.length);
+  }
+
+  /// Recursive helper function for efficient bulk loading (O(N)).
+  /// Builds a CHAMP node (potentially transient) from a list of entries at a given shift level.
+  static champ.ChampNode<K, V> _buildNode<K, V>(
+    List<MapEntry<K, V>> entries,
+    int shift,
+    champ.TransientOwner owner,
+  ) {
+    if (entries.isEmpty) {
+      return champ.ChampEmptyNode<K, V>();
     }
 
-    // Otherwise, root is non-null. Freeze the final potentially mutable root node.
-    final frozenRoot = root!.freeze(
-      owner,
-    ); // Use null assertion '!' as root is guaranteed non-null here
-    return ApexMapImpl._(frozenRoot, count);
+    if (entries.length == 1) {
+      final entry = entries.first;
+      // Data nodes are always immutable, no owner needed
+      return champ.ChampDataNode<K, V>(
+        entry.key.hashCode,
+        entry.key,
+        entry.value,
+      );
+    }
+
+    // Check for hash collisions among all entries at this level
+    final firstHash = entries.first.key.hashCode;
+    bool allSameHash = true;
+    for (int i = 1; i < entries.length; i++) {
+      if (entries[i].key.hashCode != firstHash) {
+        allSameHash = false;
+        break;
+      }
+    }
+
+    // If all entries have the same hash and we are at max depth, create CollisionNode
+    if (allSameHash && shift >= champ.kMaxDepth * champ.kBitPartitionSize) {
+      // Collision nodes can be transient
+      return champ.ChampCollisionNode<K, V>(firstHash, entries, owner);
+    }
+
+    // Partition entries based on hash fragment for the current shift level
+    final List<List<MapEntry<K, V>>> partitions = List.generate(
+      1 << champ.kBitPartitionSize,
+      (_) => [],
+    );
+    for (final entry in entries) {
+      final frag = champ.indexFragment(shift, entry.key.hashCode);
+      partitions[frag].add(entry);
+    }
+
+    int dataMap = 0;
+    int nodeMap = 0;
+    final List<Object?> dataContent = []; // Stores key, value pairs
+    final List<champ.ChampNode<K, V>> nodeContent = []; // Stores sub-nodes
+
+    for (int i = 0; i < partitions.length; i++) {
+      final partition = partitions[i];
+      if (partition.isEmpty) continue;
+
+      final bitpos = 1 << i;
+      if (partition.length == 1) {
+        // Single entry for this fragment -> DataNode
+        dataMap |= bitpos;
+        dataContent.add(partition.first.key);
+        dataContent.add(partition.first.value);
+      } else {
+        // Multiple entries for this fragment -> SubNode (Internal or Collision)
+        nodeMap |= bitpos;
+        // Recursively build the sub-node for the next level
+        nodeContent.add(
+          _buildNode(partition, shift + champ.kBitPartitionSize, owner),
+        );
+      }
+    }
+
+    // Combine data and node content into the final content list
+    final List<Object?> finalContent = [...dataContent, ...nodeContent];
+
+    // Create the transient internal node
+    return champ.ChampInternalNode<K, V>(
+      dataMap,
+      nodeMap,
+      finalContent,
+      owner, // Pass owner for transient creation
+    );
   }
 
   @override
@@ -79,7 +157,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   // Use the efficient iterator directly
   Iterable<K> get keys sync* {
-    final iterator = _ChampTrieIterator<K, V>(_root);
+    // *** UPDATED TO USE PUBLIC ITERATOR ***
+    final iterator = ChampTrieIterator<K, V>(_root);
     while (iterator.moveNext()) {
       yield iterator.current.key;
     }
@@ -88,7 +167,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   // Use the efficient iterator directly
   Iterable<V> get values sync* {
-    final iterator = _ChampTrieIterator<K, V>(_root);
+    // *** UPDATED TO USE PUBLIC ITERATOR ***
+    final iterator = ChampTrieIterator<K, V>(_root);
     while (iterator.moveNext()) {
       yield iterator.current.value;
     }
@@ -132,27 +212,31 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   ApexMap<K, V> add(K key, V value) {
     // TODO: Handle null keys if necessary
-    final champ.ChampAddResult<K, V> addResult;
-    // Handle adding to the logical empty map explicitly
-    if (_root.isEmptyNode) {
-      // DataNode creation doesn't need owner
+    // *** FIX: Handle empty case directly by checking identity with singleton ***
+    if (identical(_root, champ.ChampEmptyNode())) {
+      // Check identity with singleton
+      // Create the first DataNode with the correct types K, V
       final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, value);
-      addResult = (node: newNode, didAdd: true);
-    } else if (_root.isEmptyNode) {
-      // Explicitly handle adding to logical empty map
-      // Create the first data node directly
-      final newNode = champ.ChampDataNode<K, V>(key.hashCode, key, value);
-      addResult = (node: newNode, didAdd: true);
-    } else {
-      // Pass null owner for immutable operation on non-empty root
-      addResult = _root.add(key, value, key.hashCode, 0, null);
+      // Return a new ApexMapImpl instance directly
+      return ApexMapImpl._(newNode, 1);
+    }
+    // If not empty, proceed with the node's add method
+    // Pass null owner for immutable operation on non-empty root
+    final addResult = _root.add(key, value, key.hashCode, 0, null);
+
+    // If no actual addition occurred (key existed and value was identical),
+    // the node operation returns didAdd: false. In this case, return 'this'.
+    // Otherwise, always create a new ApexMapImpl with the result node.
+    // The 'identical' check was potentially problematic and redundant for immutable ops.
+    if (!addResult.didAdd && identical(addResult.node, _root)) {
+      // Only return 'this' if nothing changed *at all*.
+      // If only the value changed, addResult.node might be a new DataNode instance,
+      // so we still need to create a new ApexMapImpl below.
+      return this;
     }
 
-    // If the node itself didn't change, return the original map.
-    if (identical(addResult.node, _root)) return this;
-
     // Calculate the new length based on whether an actual insertion occurred.
-    final newLength = addResult.didAdd ? _length + 1 : _length;
+    final newLength = _length + (addResult.didAdd ? 1 : 0);
 
     return ApexMapImpl._(addResult.node, newLength);
   }
@@ -366,7 +450,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   // --- Iterable<MapEntry<K, V>> implementations ---
 
   @override
-  Iterator<MapEntry<K, V>> get iterator => _ChampTrieIterator<K, V>(_root);
+  // *** UPDATED TO USE PUBLIC ITERATOR ***
+  Iterator<MapEntry<K, V>> get iterator => ChampTrieIterator<K, V>(_root);
 
   // Add stubs for other required Iterable methods
   @override
@@ -406,7 +491,15 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     Iterable<T> Function(MapEntry<K, V> element) toElements,
   ) => entries.expand(toElements); // Delegate
   @override
-  MapEntry<K, V> get first => entries.first; // Delegate
+  MapEntry<K, V> get first {
+    // Use iterator directly to avoid recursion with entries getter
+    final iter = iterator;
+    if (!iter.moveNext()) {
+      throw StateError("Cannot get first element of an empty map");
+    }
+    return iter.current;
+  }
+
   @override
   MapEntry<K, V> firstWhere(
     bool Function(MapEntry<K, V> element) test, {
@@ -416,7 +509,16 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   T fold<T>(
     T initialValue,
     T Function(T previousValue, MapEntry<K, V> element) combine,
-  ) => entries.fold(initialValue, combine); // Delegate
+  ) {
+    // Explicit implementation using iterator
+    var value = initialValue;
+    final iter = iterator;
+    while (iter.moveNext()) {
+      value = combine(value, iter.current);
+    }
+    return value;
+  }
+
   @override
   Iterable<MapEntry<K, V>> followedBy(Iterable<MapEntry<K, V>> other) =>
       entries.followedBy(other); // Delegate
@@ -433,13 +535,31 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     MapEntry<K, V> Function()? orElse,
   }) => entries.lastWhere(test, orElse: orElse); // Delegate
   @override
-  Iterable<T> map<T>(T Function(MapEntry<K, V> e) convert) =>
-      entries.map(convert); // Delegate
+  Iterable<T> map<T>(T Function(MapEntry<K, V> e) convert) sync* {
+    // Explicit implementation using iterator
+    final iter = iterator;
+    while (iter.moveNext()) {
+      yield convert(iter.current);
+    }
+  }
+
   @override
   MapEntry<K, V> reduce(
     MapEntry<K, V> Function(MapEntry<K, V> value, MapEntry<K, V> element)
     combine,
-  ) => entries.reduce(combine); // Delegate
+  ) {
+    // Explicit implementation using iterator
+    final iter = iterator;
+    if (!iter.moveNext()) {
+      throw StateError("Cannot reduce empty collection");
+    }
+    var value = iter.current;
+    while (iter.moveNext()) {
+      value = combine(value, iter.current);
+    }
+    return value;
+  }
+
   @override
   MapEntry<K, V> get single => entries.single; // Delegate
   @override
@@ -448,13 +568,35 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     MapEntry<K, V> Function()? orElse,
   }) => entries.singleWhere(test, orElse: orElse); // Delegate
   @override
-  Iterable<MapEntry<K, V>> skip(int count) => entries.skip(count); // Delegate
+  Iterable<MapEntry<K, V>> skip(int count) sync* {
+    // Explicit implementation using iterator
+    final iter = iterator;
+    int skipped = 0;
+    while (iter.moveNext()) {
+      if (skipped < count) {
+        skipped++;
+      } else {
+        yield iter.current;
+      }
+    }
+  }
+
   @override
   Iterable<MapEntry<K, V>> skipWhile(
     bool Function(MapEntry<K, V> value) test,
   ) => entries.skipWhile(test); // Delegate
   @override
-  Iterable<MapEntry<K, V>> take(int count) => entries.take(count); // Delegate
+  Iterable<MapEntry<K, V>> take(int count) sync* {
+    // Explicit implementation using iterator
+    if (count <= 0) return;
+    final iter = iterator;
+    int taken = 0;
+    while (iter.moveNext() && taken < count) {
+      yield iter.current;
+      taken++;
+    }
+  }
+
   @override
   Iterable<MapEntry<K, V>> takeWhile(
     bool Function(MapEntry<K, V> value) test,
@@ -463,7 +605,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   List<MapEntry<K, V>> toList({bool growable = true}) {
     // Explicit implementation using iterator
     final list = <MapEntry<K, V>>[];
-    final iter = iterator;
+    final iter = iterator; // Uses updated getter
     while (iter.moveNext()) {
       list.add(iter.current);
     }
@@ -479,7 +621,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   Set<MapEntry<K, V>> toSet() {
     // Explicit implementation using iterator to avoid potential recursion
     final set = <MapEntry<K, V>>{};
-    final iter = iterator;
+    final iter = iterator; // Uses updated getter
     while (iter.moveNext()) {
       set.add(iter.current);
     }
@@ -491,7 +633,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     bool Function(MapEntry<K, V> element) test,
   ) sync* {
     // Explicit implementation using iterator
-    final iter = iterator;
+    final iter = iterator; // Uses updated getter
     while (iter.moveNext()) {
       if (test(iter.current)) {
         yield iter.current;
@@ -502,7 +644,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   Iterable<T> whereType<T>() sync* {
     // Explicit implementation using iterator
-    final iter = iterator;
+    final iter = iterator; // Uses updated getter
     while (iter.moveNext()) {
       // Need to check the type of the entry itself, not just yield
       final current = iter.current;
@@ -517,7 +659,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Create a standard mutable map
     final map = <K, V>{};
     // Use the efficient iterator
-    final iter = iterator;
+    final iter = iterator; // Uses updated getter
     while (iter.moveNext()) {
       map[iter.current.key] = iter.current.value;
     }
@@ -548,9 +690,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
     // Use transient building for efficiency
     final owner = champ.TransientOwner();
-    champ.ChampNode<K2, V2> mutableNewRoot = champ.ChampEmptyNode<K2, V2>();
+    // Start with null root, create the first node on the first iteration.
+    champ.ChampNode<K2, V2>? mutableNewRoot;
     int newCount = 0;
-    // No need for 'changed' flag when building from scratch
 
     for (final entry in entries) {
       // Iterate original entries
@@ -559,40 +701,38 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       final V2 newValue = newEntry.value;
       final int newKeyHash = newKey.hashCode;
 
-      // Add the new entry to the mutableNewRoot, passing the owner
-      final result = mutableNewRoot.add(newKey, newValue, newKeyHash, 0, owner);
-
-      // Update root reference (might be the same mutable node or a new one)
-      mutableNewRoot = result.node;
-      if (result.didAdd) {
-        newCount++;
+      if (mutableNewRoot == null) {
+        // First element: create the initial DataNode directly
+        mutableNewRoot = champ.ChampDataNode<K2, V2>(
+          newKeyHash,
+          newKey,
+          newValue,
+        );
+        newCount = 1; // Initialize count
+      } else {
+        // Subsequent elements: add to the existing root using transient owner
+        final result = mutableNewRoot.add(
+          newKey,
+          newValue,
+          newKeyHash,
+          0,
+          owner,
+        );
+        mutableNewRoot = result.node; // Update root reference
+        if (result.didAdd) {
+          newCount++;
+        }
       }
-      // Overwrites are handled correctly by add
+    }
+
+    // If the original map was empty or convert resulted in no entries, return empty.
+    if (mutableNewRoot == null) {
+      return ApexMap<K2, V2>.empty();
     }
 
     // If the resulting map is empty, return the canonical empty instance.
     if (newCount == 0) return ApexMap<K2, V2>.empty();
 
-    // If no structural changes occurred and the count is the same,
-    // and if the types match, we could potentially return 'this'.
-    // This is complex to check correctly, especially value equality after conversion.
-    // Example check (use with caution):
-    // if (!changed && newCount == _length && this is ApexMap<K2, V2>) {
-    //   // Still need to verify values didn't change if structure is identical
-    //   bool valuesChanged = false;
-    //   try {
-    //      final tempNewMap = ApexMapImpl<K2, V2>._(newRoot, newCount);
-    //      for (final entry in entries) {
-    //         final newEntryCheck = convert(entry.key, entry.value);
-    //         if (tempNewMap[newEntryCheck.key] != newEntryCheck.value) {
-    //            valuesChanged = true;
-    //            break;
-    //         }
-    //      }
-    //   } catch (_) { valuesChanged = true; } // Assume change on error
-    //   if (!valuesChanged) return this as ApexMap<K2, V2>;
-    // }
-    // For simplicity and guaranteed correctness, we create the new instance if changed.
     // Freeze the final potentially mutable root node
     final frozenNewRoot = mutableNewRoot.freeze(owner);
 
@@ -632,12 +772,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     }
 
     if (keysToRemove.isEmpty) {
-      // If ensureMutable created a copy, freeze it before returning
-      if (!identical(mutableRoot, _root)) {
-        final frozenRoot = mutableRoot.freeze(owner);
-        return ApexMapImpl._(frozenRoot, _length); // Length unchanged
-      }
-      return this; // No changes needed
+      // No elements matched the predicate, return the original instance.
+      // Even if ensureMutable created a copy, no logical change occurred.
+      return this;
     }
 
     // Perform removals on the mutable root
@@ -663,7 +800,6 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
     // Return new instance with the frozen root and updated count
     return ApexMapImpl._(frozenRoot, newCount);
-    // Removed the old iterative logic replaced above
   }
 
   // --- Equality and HashCode ---
@@ -672,13 +808,13 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
     if (other is ApexMap<K, V>) {
-      // Use 'is' for type check
+      // Check specific type first
       if (length != other.length) return false;
       if (isEmpty) return true; // Both empty and same length
 
-      // TODO: Optimize equality check using tree comparison if possible.
-      // Intermediate approach: Compare entries one by one.
+      // Compare content (original logic)
       try {
+        // TODO: Optimize equality check using tree comparison if possible.
         for (final entry in entries) {
           // Uses efficient iterator
           // Use other[key] which should be efficient (O(logN))
@@ -689,11 +825,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
         }
         return true; // All entries matched
       } catch (_) {
-        // If other map throws during lookup, consider them unequal
-        return false;
+        return false; // Error during comparison
       }
     }
-    return false; // Not an ApexMap<K, V>
+    // If not identical and not an ApexMap<K, V> with same content, return false
+    return false;
   }
 
   @override
@@ -728,126 +864,4 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   }
 } // <<< Closing brace for ApexMapImpl
 
-/// Efficient iterator for traversing the CHAMP Trie.
-class _ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
-  // Stacks to manage the traversal state
-  final List<champ.ChampNode<K, V>> _nodeStack = [];
-  final List<int> _bitposStack =
-      []; // Stores the next bit position (1 << i) to check
-  final List<Iterator<MapEntry<K, V>>> _collisionIteratorStack =
-      []; // For CollisionNodes
-
-  MapEntry<K, V>? _currentEntry;
-
-  _ChampTrieIterator(champ.ChampNode<K, V> rootNode) {
-    if (!rootNode.isEmptyNode) {
-      _pushNode(rootNode);
-    }
-  }
-
-  void _pushNode(champ.ChampNode<K, V> node) {
-    if (node is champ.ChampCollisionNode<K, V>) {
-      _nodeStack.add(node);
-      _bitposStack.add(0); // Not used for collision nodes
-      _collisionIteratorStack.add(node.entries.iterator);
-    } else if (node is champ.ChampInternalNode<K, V>) {
-      _nodeStack.add(node);
-      _bitposStack.add(1); // Start checking from the first bit position
-    }
-    // ChampEmptyNode is not pushed
-  }
-
-  @override
-  MapEntry<K, V> get current {
-    if (_currentEntry == null) {
-      // Adhere to Iterator contract: throw if current is accessed before moveNext
-      // or after moveNext returns false.
-      throw StateError('No current element');
-    }
-    return _currentEntry!;
-  }
-
-  @override
-  bool moveNext() {
-    while (_nodeStack.isNotEmpty) {
-      final node = _nodeStack.last;
-      final bitpos = _bitposStack.last;
-
-      if (node is champ.ChampCollisionNode<K, V>) {
-        final iterator = _collisionIteratorStack.last;
-        if (iterator.moveNext()) {
-          _currentEntry = iterator.current;
-          return true;
-        } else {
-          // Finished with this collision node
-          _nodeStack.removeLast();
-          _bitposStack.removeLast();
-          _collisionIteratorStack.removeLast();
-          continue; // Try the next node on the stack
-        }
-      }
-
-      if (node is champ.ChampInternalNode<K, V>) {
-        final dataMap = node.dataMap;
-        final nodeMap = node.nodeMap;
-        final content = node.content;
-
-        // Resume checking bit positions from where we left off
-        for (
-          int currentBitpos = bitpos;
-          currentBitpos <
-              (1 << champ.kBitPartitionSize); // Use imported constant
-          currentBitpos <<= 1
-        ) {
-          if ((dataMap & currentBitpos) != 0) {
-            // Found a data entry
-            final dataIndex = champ.bitCount(
-              // Use bitCount from champ_node.dart
-              dataMap & (currentBitpos - 1),
-            );
-            final payloadIndex = dataIndex * 2;
-            final key = content[payloadIndex] as K;
-            final value = content[payloadIndex + 1] as V;
-            _currentEntry = MapEntry(key, value);
-            // Update stack to resume after this bitpos on next call
-            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
-            return true;
-          }
-          if ((nodeMap & currentBitpos) != 0) {
-            // Found a sub-node, push it onto the stack and descend
-            final nodeLocalIndex = champ.bitCount(
-              // Use bitCount from champ_node.dart
-              nodeMap & (currentBitpos - 1),
-            );
-            // Explicitly cast to int as a workaround for potential analyzer issue
-            final nodeIndex = (content.length - 1 - nodeLocalIndex) as int;
-            final subNode = content[nodeIndex] as champ.ChampNode<K, V>;
-
-            // Update stack to resume after this bitpos in the current node later
-            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
-            // Push the new sub-node to explore next
-            _pushNode(subNode);
-            // Restart the outer loop to process the newly pushed node
-            // Use break instead of continue to avoid processing the same node again immediately
-            break; // Exit inner for-loop, outer while-loop will process pushed node
-          }
-        }
-        // If the inner loop completed without finding/pushing, pop the current node
-        if (_nodeStack.isNotEmpty && _nodeStack.last == node) {
-          // Check if a sub-node was pushed
-          _nodeStack.removeLast();
-          _bitposStack.removeLast();
-        }
-      } else {
-        // Should not happen if root wasn't empty (ChampEmptyNode case handled in constructor)
-        // Or if node was ChampDataNode (should not be pushed onto stack)
-        _nodeStack.removeLast();
-        _bitposStack.removeLast();
-      }
-    }
-
-    // Stack is empty, iteration complete
-    _currentEntry = null; // Invalidate current
-    return false;
-  }
-}
+// *** REMOVED _ChampTrieIterator CLASS DEFINITION ***
