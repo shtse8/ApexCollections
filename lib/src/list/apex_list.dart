@@ -3,30 +3,29 @@ import 'package:collection/collection.dart'; // For ListEquality
 import 'apex_list_api.dart';
 import 'rrb_node.dart' as rrb; // Use prefix for node types and constants
 
-/// Concrete implementation of [ApexList] using an RRB-Tree.
+/// Concrete implementation of [ApexList] using a Relaxed Radix Balanced Tree (RRB-Tree).
+///
+/// This class provides the internal logic and data structures for the immutable list.
+/// It should generally not be used directly; prefer using the factories on [ApexList]
+/// like [ApexList.empty], [ApexList.from], etc.
 class ApexListImpl<E> extends ApexList<E> {
-  /// The root node of the RRB-Tree. Can be RrbEmptyNode.
+  /// The root node of the RRB-Tree.
+  /// This can be an [rrb.RrbInternalNode], [rrb.RrbLeafNode], or the canonical
+  /// empty leaf node instance.
   final rrb.RrbNode<E> _root;
   // TODO: Add tail/focus buffer for optimization
 
-  /// The number of elements in the list.
+  /// The total number of elements in the list, cached for O(1) access.
   final int _length;
 
-  /// The canonical empty instance.
-  /// The canonical empty instance (internal).
-  // Cache for empty instances per type E. Expando allows associating a value
-  // with a type object without modifying the Type class itself.
-  static final Expando<ApexListImpl> _emptyCache = Expando<ApexListImpl>();
+  /// Cache for canonical empty instances, keyed by element type.
+  /// Uses an [Expando] to associate the empty instance with the type object.
+  static final Expando _emptyCache = Expando(); // Use non-generic Expando
 
   /// Public accessor for the canonical empty instance for a given type E.
+  /// Ensures that all empty lists of the same type share the same instance.
   static ApexListImpl<E> emptyInstance<E>() {
     // Retrieve or create and cache the empty instance for type E.
-    // The cast `as rrb.RrbNode<E>` is necessary because the static
-    // instance is RrbEmptyNode<Never>. This cast is generally safe for the
-    // empty node case, as operations will typically check isEmptyNode first
-    // or create new nodes with the correct type E.
-    // The final `as ApexListImpl<E>` is needed because the Expando stores ApexListImpl<dynamic>.
-    // Use the new static empty leaf node instance.
     return (_emptyCache[E] ??= ApexListImpl<E>._(
           rrb.RrbLeafNode.emptyInstance
               as rrb.RrbNode<E>, // Cast the shared Never node
@@ -35,13 +34,20 @@ class ApexListImpl<E> extends ApexList<E> {
         as ApexListImpl<E>;
   }
 
-  // Temporary getter for debugging
+  /// Internal getter for debugging purposes, exposing the root node.
+  /// **Warning:** Should not be used in production code.
   rrb.RrbNode<E>? get debugRoot => _root;
 
-  /// Internal constructor (cannot be const due to Expando cache).
+  /// Internal constructor to create an [ApexListImpl] instance.
+  /// Takes the [root] node and the pre-calculated [length].
   ApexListImpl._(this._root, this._length);
 
-  /// Factory constructor to create from an Iterable.
+  /// Factory constructor to create an [ApexListImpl] from an [Iterable].
+  ///
+  /// Uses an efficient O(N) bottom-up transient build algorithm.
+  /// It first creates transient leaf nodes, then builds transient internal
+  /// nodes level by level until a single root node is formed. Finally,
+  /// the entire transient tree is frozen into an immutable state.
   factory ApexListImpl.fromIterable(Iterable<E> elements) {
     // Optimization: If input is already an ApexListImpl, return it directly.
     if (elements is ApexListImpl<E>) {
@@ -62,6 +68,9 @@ class ApexListImpl<E> extends ApexList<E> {
       return emptyInstance<E>();
     }
 
+    // --- Use Transient Building ---
+    final owner = rrb.TransientOwner();
+
     // --- Build Leaf Nodes ---
     List<rrb.RrbNode<E>> currentLevelNodes = [];
     for (int i = 0; i < totalLength; i += rrb.kBranchingFactor) {
@@ -70,7 +79,10 @@ class ApexListImpl<E> extends ApexList<E> {
           (i + rrb.kBranchingFactor < totalLength)
               ? i + rrb.kBranchingFactor
               : totalLength;
-      currentLevelNodes.add(rrb.RrbLeafNode<E>(sourceList.sublist(i, end)));
+      // Pass owner to create transient leaf nodes
+      currentLevelNodes.add(
+        rrb.RrbLeafNode<E>(sourceList.sublist(i, end), owner),
+      );
     }
 
     // --- Build Internal Nodes ---
@@ -113,20 +125,30 @@ class ApexListImpl<E> extends ApexList<E> {
             parentCount,
             childrenChunk,
             parentSizeTable,
+            owner, // Pass owner to create transient internal nodes
           ),
         );
       }
       currentLevelNodes = parentLevelNodes;
     }
 
-    // The single remaining node is the root
+    // The single remaining node is the root (potentially transient)
     final rootNode = currentLevelNodes[0];
-    return ApexListImpl._(rootNode, totalLength);
+    // Freeze the entire transient structure before returning
+    final frozenRoot = rootNode.freeze(owner);
+    return ApexListImpl._(frozenRoot, totalLength);
   }
 
   /// Computes a size table for a list of children nodes at a given height,
-  /// returning null if the resulting parent node would be strict.
-  /// (Helper for fromIterable constructor)
+  /// returning null if the resulting parent node would be strict (i.e., does not
+  /// require relaxation).
+  ///
+  /// A node needs relaxation (and thus a size table) if any of its children
+  /// (except the last one) are not "full" for their height, or if children
+  /// have inconsistent heights (which shouldn't happen in a balanced tree but
+  /// is checked for robustness).
+  ///
+  /// (Helper for the `fromIterable` constructor)
   static List<int>? _computeSizeTableIfNeeded<E>(
     List<rrb.RrbNode<E>> children, // Use prefixed type
     int parentHeight,
@@ -134,32 +156,41 @@ class ApexListImpl<E> extends ApexList<E> {
     if (children.isEmpty) return null;
 
     bool needsTable = false;
-    int expectedChildSize = -1;
-
-    // Determine expected size based on child height
-    final childHeight = parentHeight - 1;
-    if (childHeight > 0) {
-      // Internal node children
-      expectedChildSize =
-          1 <<
-          (childHeight * rrb.kLog2BranchingFactor); // Use constant from rrb
-    } else {
-      // Leaf node children
-      expectedChildSize = rrb.kBranchingFactor;
+    final int childHeight = parentHeight - 1;
+    // Allow check even if childHeight is -1 (for leaves becoming internal)
+    if (childHeight < 0 && children.any((c) => c is! rrb.RrbLeafNode)) {
+      return null; // Should not happen with leaves
     }
+    if (childHeight < 0)
+      return null; // All children must be leaves if height is 1
+
+    final int expectedChildNodeSize =
+        (childHeight == 0)
+            ? rrb.kBranchingFactor
+            : (1 << (childHeight * rrb.kLog2BranchingFactor));
 
     int cumulativeCount = 0;
-    final sizeTable = List<int>.filled(children.length, 0);
+    final calculatedSizeTable = List<int>.filled(children.length, 0);
+
     for (int i = 0; i < children.length; i++) {
       final child = children[i];
+      // Check height consistency
+      if (child.height != childHeight) {
+        // If heights mismatch, force relaxation and stop checking fullness
+        needsTable = true;
+      }
       cumulativeCount += child.count;
-      sizeTable[i] = cumulativeCount;
-      // Check if relaxation is needed (don't need to check the last child)
-      if (i < children.length - 1 && child.count != expectedChildSize) {
+      calculatedSizeTable[i] = cumulativeCount;
+      // Only check fullness if heights are consistent so far
+      // The last child is allowed to be non-full.
+      if (!needsTable &&
+          i < children.length - 1 &&
+          child.count != expectedChildNodeSize) {
         needsTable = true;
       }
     }
-    return needsTable ? sizeTable : null;
+    // Return table if needed due to fullness or height mismatch
+    return needsTable ? calculatedSizeTable : null;
   }
 
   @override
@@ -473,25 +504,24 @@ class ApexListImpl<E> extends ApexList<E> {
     // Note: Use effectiveEnd for the rest of the logic now
     final actualEnd = effectiveEnd;
 
-    // Reverted: Use the iterator to gather elements efficiently,
-    // then build a new list using the factory. O(M) where M is sublist length.
-    final sublistElements = List<E>.empty(growable: true);
-    int currentIndex = 0;
-    for (final element in this) {
-      // Uses the efficient _RrbTreeIterator
-      if (currentIndex >= actualEnd) break; // Stop after reaching the end index
-      if (currentIndex >= start) {
-        sublistElements.add(element);
-      }
-      currentIndex++;
-    }
+    // Use the efficient O(log N) tree slicing helper.
+    final slicedNode = _sliceTree<E>(_root, start, actualEnd);
 
-    // Build the new list from the gathered elements using the efficient factory.
-    return ApexListImpl<E>.fromIterable(sublistElements);
+    if (slicedNode == null) {
+      // _sliceTree returns null if the resulting slice is empty.
+      return emptyInstance<E>();
+    } else {
+      // Create a new ApexListImpl with the sliced node and calculated length.
+      return ApexListImpl<E>._(slicedNode, subLength);
+    }
   }
 
   /// Static helper to perform efficient slicing on an RRB-Tree node.
-  /// Returns a new node representing the slice [start, end), or null if empty.
+  ///
+  /// Recursively traverses the tree, selecting and potentially slicing child
+  /// nodes that fall within the requested range [`start`, `end`). Returns a new
+  /// root node for the resulting slice, or `null` if the slice is empty.
+  /// Complexity: O(log N) where N is the number of elements in the original node.
   static rrb.RrbNode<E>? _sliceTree<E>(
     rrb.RrbNode<E> node,
     int start, // Inclusive start index relative to this node
@@ -622,6 +652,7 @@ class ApexListImpl<E> extends ApexList<E> {
 
   /// Static helper to concatenate two RRB-Trees represented by their roots.
   /// Handles height differences and delegates to node-level concatenation.
+  /// Complexity: O(log N) where N is the size of the larger tree.
   static rrb.RrbNode<E> _concatenateTrees<E>(
     rrb.RrbNode<E> leftRoot,
     int
@@ -1402,32 +1433,40 @@ class ApexListImpl<E> extends ApexList<E> {
 } // <<< THIS IS THE CORRECT CLOSING BRACE FOR ApexListImpl
 
 /// Efficient iterator for traversing the RRB-Tree.
+/// Uses a stack to manage descent into internal nodes and keeps track of the
+/// current position within leaf nodes.
 class _RrbTreeIterator<E> implements Iterator<E> {
-  // Stack for internal node traversal
+  // Stack for internal node traversal (stores nodes to visit)
   final List<rrb.RrbNode<E>> _nodeStack = [];
+  // Stack to track the index of the next child to visit within each internal node
   final List<int> _indexStack = [];
 
-  // Current leaf node being processed and index within it
+  // Current leaf node being processed
   rrb.RrbLeafNode<E>? _currentLeaf;
+  // Index within the current leaf's elements list
   int _leafIndex = 0;
 
+  // The element to be returned by the current getter
   E? _currentElement;
 
+  /// Creates an iterator starting at the root of the given [list]'s RRB-Tree.
   _RrbTreeIterator(ApexListImpl<E> list) {
     if (!list.isEmpty) {
-      _pushNode(list._root);
+      _pushNode(list._root); // Start traversal at the root
     }
   }
 
-  /// Pushes a node onto the stack (typically internal nodes).
+  /// Pushes an internal node onto the traversal stack.
   void _pushNode(rrb.RrbNode<E> node) {
     _nodeStack.add(node);
-    _indexStack.add(0);
+    _indexStack.add(0); // Start at the first child (index 0)
   }
 
   @override
   E get current {
     if (_currentElement == null) {
+      // Adhere to Iterator contract: throw if current is accessed before moveNext
+      // or after moveNext returns false.
       throw StateError('No current element. Call moveNext() first.');
     }
     return _currentElement!;
@@ -1447,17 +1486,16 @@ class _RrbTreeIterator<E> implements Iterator<E> {
       }
     }
 
-    // 2. If no active leaf iterator, traverse the node stack
+    // 2. If no active leaf iterator, traverse the node stack to find the next leaf
     while (_nodeStack.isNotEmpty) {
       final node = _nodeStack.last;
       final index = _indexStack.last;
 
       if (node is rrb.RrbLeafNode<E>) {
-        // Found a leaf node
+        // Found a leaf node on the stack (should generally be pushed by internal node logic)
         _nodeStack.removeLast(); // Pop this leaf from the node stack
         _indexStack.removeLast();
 
-        // Found a non-empty leaf
         if (node.elements.isNotEmpty) {
           _currentLeaf = node;
           _leafIndex = 0;
@@ -1468,8 +1506,7 @@ class _RrbTreeIterator<E> implements Iterator<E> {
             return true;
           } else {
             // Leaf was technically not empty but became exhausted immediately?
-            // This case seems unlikely if node.elements.isNotEmpty passed.
-            // Resetting just in case.
+            // This case seems unlikely if node.elements.isNotEmpty passed. Reset just in case.
             _currentLeaf = null;
             _leafIndex = 0;
           }
@@ -1479,19 +1516,20 @@ class _RrbTreeIterator<E> implements Iterator<E> {
       } else if (node is rrb.RrbInternalNode<E>) {
         // Internal node: descend into the next child
         if (index < node.children.length) {
-          _indexStack[_indexStack.length -
-              1]++; // Point to next child for later
-          _pushNode(node.children[index]); // Push child to process next
+          // Increment index for the current node before pushing child
+          _indexStack[_indexStack.length - 1]++;
+          // Push the next child to process
+          _pushNode(node.children[index]);
           continue; // Restart loop to process the newly pushed node
         } else {
           // Finished with this internal node's children, pop it
           _nodeStack.removeLast();
           _indexStack.removeLast();
-          continue; // Continue with the parent node
+          continue; // Continue with the parent node on the stack
         }
       } else {
         // Should only be EmptyNode initially, which isn't pushed.
-        // If encountered later, just pop.
+        // If encountered later (e.g., due to error), just pop.
         _nodeStack.removeLast();
         _indexStack.removeLast();
       }

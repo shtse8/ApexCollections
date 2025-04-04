@@ -1,17 +1,35 @@
+/// Defines the core node structures for the Compressed Hash-Array Mapped Prefix Tree (CHAMP)
+/// used internally by [ApexMap].
+///
+/// This library includes the abstract [ChampNode] base class and its concrete
+/// implementations: [ChampEmptyNode], [ChampDataNode], [ChampCollisionNode],
+/// and [ChampInternalNode]. It also defines constants related to the trie structure
+/// (like [kBitPartitionSize]) and the [TransientOwner] mechanism for mutable operations.
+library;
+
 import 'dart:math';
 import 'package:collection/collection.dart'; // For ListEquality used in CollisionNode
 import 'package:meta/meta.dart';
 
 // --- Constants ---
 
+/// The number of bits used for each level (hash fragment) of the CHAMP trie.
+/// A value of 5 means each node can have up to 2^5 = 32 children/data entries.
 const int kBitPartitionSize = 5;
+
+/// Bitmask used to extract the hash fragment for the current level.
+/// Calculated as `(1 << kBitPartitionSize) - 1`.
 const int kBitPartitionMask = (1 << kBitPartitionSize) - 1;
+
+/// The maximum depth of the CHAMP trie, determined by the hash code size (32 bits)
+/// and the partition size. `ceil(32 / 5) = 7`.
 const int kMaxDepth = 7; // ceil(32 / 5) - Max depth based on 32-bit hash
 
 // --- Helper Functions ---
 
-/// Counts the number of set bits (1s) in an integer.
-/// Used for calculating indices within the node's content array.
+/// Counts the number of set bits (1s) in an integer's binary representation.
+/// Also known as the Hamming weight or population count (popcount).
+/// Used for calculating indices within the node's content array based on bitmaps.
 int bitCount(int n) {
   // Simple bit count implementation (can be optimized if needed)
   int count = 0;
@@ -22,35 +40,65 @@ int bitCount(int n) {
   return count;
 }
 
-/// Extracts the relevant fragment of the hash code for a given shift level.
+/// Extracts the relevant fragment (portion) of the [hash] code for a given [shift] level.
+/// The [shift] determines which bits of the hash code are considered for this level.
 int indexFragment(int shift, int hash) => (hash >> shift) & kBitPartitionMask;
 
 // --- Transient Ownership ---
 
-/// A marker object to track transient (mutable) operations.
-/// Nodes belonging to the same owner can be mutated in place.
+/// A marker object used to track ownership during transient (mutable) operations
+/// on CHAMP Trie nodes.
+///
+/// When performing bulk operations like `addAll` or `fromMap`, nodes can be
+/// temporarily mutated in place if they share the same [TransientOwner]. This
+/// avoids excessive copying and improves performance. Once the operation is
+/// complete, the tree is "frozen" back into an immutable state using [ChampNode.freeze].
 class TransientOwner {
+  /// Creates a new unique owner instance.
   const TransientOwner();
 }
 
 // --- Node Base Class ---
 
-/// Abstract base class for CHAMP Trie nodes.
+/// Abstract base class for nodes in the Compressed Hash-Array Mapped Prefix Tree (CHAMP).
+///
+/// Nodes represent parts of the immutable map structure. They can be:
+/// * [ChampEmptyNode]: Represents the canonical empty map.
+/// * [ChampDataNode]: Represents a single key-value pair.
+/// * [ChampCollisionNode]: Represents multiple entries with hash collisions at a certain depth.
+/// * [ChampInternalNode]: Represents a branch with multiple children (data or other nodes).
+///
+/// Nodes are immutable by default but support transient mutation via the
+/// [TransientOwner] mechanism for performance optimization during bulk updates.
 @immutable // Nodes are immutable by default unless transient
 abstract class ChampNode<K, V> {
-  /// Owner for transient mutation. Null if immutable.
+  /// Optional owner for transient nodes. If non-null, this node might be mutable
+  /// by the holder of this specific [TransientOwner] instance.
   TransientOwner? _owner;
 
+  /// Constructor for subclasses. Assigns an optional [owner] for transient state.
   ChampNode([this._owner]);
 
-  /// Checks if the node is transient and belongs to the given owner.
+  /// Checks if the node is currently mutable and belongs to the given [owner].
   bool isTransient(TransientOwner? owner) => _owner != null && _owner == owner;
 
-  /// Returns the value associated with the key, or null if not found.
+  /// Returns the value associated with the [key], or `null` if the key is not found
+  /// within the subtree rooted at this node.
+  ///
+  /// - [hash]: The full hash code of the [key].
+  /// - [shift]: The current bit shift level for hash fragment calculation.
   V? get(K key, int hash, int shift);
 
-  /// Adds or updates a key-value pair. Returns the potentially modified node
-  /// and a flag indicating if the size increased.
+  /// Adds or updates a key-value pair within the subtree rooted at this node.
+  ///
+  /// - [key], [value]: The key-value pair to add/update.
+  /// - [hash]: The full hash code of the [key].
+  /// - [shift]: The current bit shift level.
+  /// - [owner]: The [TransientOwner] if performing a mutable operation.
+  ///
+  /// Returns a [ChampAddResult] record containing:
+  /// - `node`: The potentially new root node of the modified subtree.
+  /// - `didAdd`: `true` if a new key was added, `false` if an existing key was updated.
   ChampAddResult<K, V> add(
     K key,
     V value,
@@ -59,8 +107,16 @@ abstract class ChampNode<K, V> {
     TransientOwner? owner,
   );
 
-  /// Removes a key. Returns the potentially modified node and a flag
-  /// indicating if a removal occurred.
+  /// Removes a [key] from the subtree rooted at this node.
+  ///
+  /// - [key]: The key to remove.
+  /// - [hash]: The full hash code of the [key].
+  /// - [shift]: The current bit shift level.
+  /// - [owner]: The [TransientOwner] if performing a mutable operation.
+  ///
+  /// Returns a [ChampRemoveResult] record containing:
+  /// - `node`: The potentially new root node of the modified subtree (could be [ChampEmptyNode]).
+  /// - `didRemove`: `true` if the key was found and removed, `false` otherwise.
   ChampRemoveResult<K, V> remove(
     K key,
     int hash,
@@ -68,8 +124,18 @@ abstract class ChampNode<K, V> {
     TransientOwner? owner,
   );
 
-  /// Updates a key's value. Returns the potentially modified node and a flag
-  /// indicating if the size changed (due to insertion via ifAbsentFn).
+  /// Updates the value associated with [key] in the subtree rooted at this node.
+  ///
+  /// - [key]: The key whose value to update.
+  /// - [hash]: The full hash code of the [key].
+  /// - [shift]: The current bit shift level.
+  /// - [updateFn]: Function called with the current value if the key exists. Its return value becomes the new value.
+  /// - [ifAbsentFn]: Optional function called if the key does *not* exist. Its return value is inserted as the new value.
+  /// - [owner]: The [TransientOwner] if performing a mutable operation.
+  ///
+  /// Returns a [ChampUpdateResult] record containing:
+  /// - `node`: The potentially new root node of the modified subtree.
+  /// - `sizeChanged`: `true` if a new key was inserted via [ifAbsentFn], `false` otherwise.
   ChampUpdateResult<K, V> update(
     K key,
     int hash,
@@ -79,10 +145,15 @@ abstract class ChampNode<K, V> {
     TransientOwner? owner,
   });
 
-  /// Returns an immutable version of this node. Freezes if transient and owned.
+  /// Returns an immutable version of this node.
+  ///
+  /// If the node is transient and owned by the provided [owner], it recursively
+  /// freezes its children (if any), clears its owner, makes its internal lists
+  /// unmodifiable (if applicable), and returns itself. Otherwise, returns `this`.
   ChampNode<K, V> freeze(TransientOwner? owner);
 
-  /// Helper to get the hash code of a key (handles null if needed later).
+  /// Helper to get the hash code of a key.
+  /// Subclasses might override this if special key handling (like null) is needed.
   int hashOfKey(K key) => key.hashCode;
 
   /// Indicates if this is the canonical empty node.
@@ -91,13 +162,19 @@ abstract class ChampNode<K, V> {
 
 // --- Result Tuples (using Records for Dart 3+) ---
 
+/// Record type returned by the [ChampNode.add] method.
 typedef ChampAddResult<K, V> = ({ChampNode<K, V> node, bool didAdd});
+
+/// Record type returned by the [ChampNode.remove] method.
 typedef ChampRemoveResult<K, V> = ({ChampNode<K, V> node, bool didRemove});
+
+/// Record type returned by the [ChampNode.update] method.
 typedef ChampUpdateResult<K, V> = ({ChampNode<K, V> node, bool sizeChanged});
 
 // --- Empty Node ---
 
-/// Represents the single, canonical empty node.
+/// Represents the single, canonical empty CHAMP node.
+/// This is used as the starting point for an empty [ApexMap].
 class ChampEmptyNode<K, V> extends ChampNode<K, V> {
   // Private constructor for singleton pattern
   ChampEmptyNode._internal() : super(null); // Always immutable
@@ -106,7 +183,7 @@ class ChampEmptyNode<K, V> extends ChampNode<K, V> {
   static final ChampEmptyNode<Never, Never> _instance =
       ChampEmptyNode._internal();
 
-  // Factory constructor to return the singleton instance, casting as needed
+  /// Factory constructor to return the singleton empty node instance.
   factory ChampEmptyNode() => _instance as ChampEmptyNode<K, V>;
 
   @override
@@ -163,17 +240,24 @@ class ChampEmptyNode<K, V> extends ChampNode<K, V> {
 
 // --- Data Node ---
 
-/// Represents a node containing a single key-value pair.
+/// Represents a CHAMP node containing exactly one key-value pair.
+/// These nodes are always immutable.
 class ChampDataNode<K, V> extends ChampNode<K, V> {
+  /// The full hash code of the stored key.
   final int dataHash;
+
+  /// The stored key.
   final K dataKey;
+
+  /// The stored value.
   final V dataValue;
 
-  // Data nodes are always immutable (owner is null)
+  /// Creates an immutable data node.
   ChampDataNode(this.dataHash, this.dataKey, this.dataValue) : super(null);
 
   @override
   V? get(K key, int hash, int shift) {
+    // Check if the requested key matches the stored key.
     return (key == dataKey) ? dataValue : null;
   }
 
@@ -186,12 +270,12 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
     TransientOwner? owner,
   ) {
     if (key == dataKey) {
-      // Update existing key
+      // Update existing key if value differs
       if (value == dataValue) return (node: this, didAdd: false); // No change
       return (node: ChampDataNode(hash, key, value), didAdd: false);
     }
 
-    // Collision: Create an internal node or collision node
+    // Collision: Create a new node (Internal or Collision) to merge the two entries.
     final newNode = mergeDataEntries(
       shift, // Start merging from the current shift level
       dataHash,
@@ -212,7 +296,7 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
     TransientOwner? owner,
   ) {
     if (key == dataKey) {
-      // Remove this node by returning the empty node
+      // Remove this node by returning the canonical empty node.
       return (node: ChampEmptyNode<K, V>(), didRemove: true);
     }
     return (node: this, didRemove: false); // Key not found
@@ -233,7 +317,7 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
       if (newValue == dataValue) return (node: this, sizeChanged: false);
       return (node: ChampDataNode(hash, key, newValue), sizeChanged: false);
     } else if (ifAbsentFn != null) {
-      // Key not found, add using ifAbsentFn
+      // Key not found, add using ifAbsentFn (results in merging)
       final newValue = ifAbsentFn();
       final newNode = mergeDataEntries(
         shift,
@@ -256,13 +340,21 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
 
 // --- Collision Node ---
 
-/// Represents a node containing multiple entries that have the same hash code
-/// fragment up to a certain depth. Stores entries in a simple list.
+/// Represents a CHAMP node containing multiple entries that have the same hash code
+/// up to a certain depth (i.e., their hash fragments collide at multiple levels).
+/// Stores entries in a simple list and performs linear search within that list.
 class ChampCollisionNode<K, V> extends ChampNode<K, V> {
-  final int collisionHash; // The hash code causing the collision
-  List<MapEntry<K, V>> entries; // Made mutable
+  /// The hash code shared by all entries in this node.
+  final int collisionHash;
 
-  // Constructor ensures the list is mutable if owned, otherwise unmodifiable
+  /// The list of colliding entries. Mutable only if the node is transient.
+  List<MapEntry<K, V>> entries;
+
+  /// Creates a collision node.
+  ///
+  /// - [collisionHash]: The common hash code.
+  /// - [entries]: The list of entries with the colliding hash. Must contain at least 2 entries.
+  /// - [owner]: Optional [TransientOwner] for mutability.
   ChampCollisionNode(
     this.collisionHash,
     List<MapEntry<K, V>> entries, [
@@ -275,6 +367,7 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
   V? get(K key, int hash, int shift) {
     // Only search if the hash matches the collision hash
     if (hash == collisionHash) {
+      // Linear search through the colliding entries
       for (final entry in entries) {
         if (entry.key == key) {
           return entry.value;
@@ -293,8 +386,8 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
     TransientOwner? owner,
   ) {
     if (hash != collisionHash) {
-      // Hash differs, need to create an internal node to split
-      // Create a new internal node containing this collision node and the new data node
+      // Hash differs, need to create an internal node to split this collision node
+      // and the new data node based on their differing hash fragments at this level.
       final dataNode = ChampDataNode<K, V>(hash, key, value);
       final newNode = ChampInternalNode<K, V>.fromNodes(
         shift, // Create internal node at the current shift level
@@ -302,7 +395,7 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
         this, // Existing collision node
         hash,
         dataNode, // New data node
-        null, // Immutable operation
+        null, // Immutable operation when splitting
       );
       return (node: newNode, didAdd: true);
     }
@@ -316,11 +409,11 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       if (mutableNode.entries[existingIndex].value == value) {
         return (node: mutableNode, didAdd: false); // No change
       }
-      // Mutate in place
+      // Mutate in place if transient
       mutableNode.entries[existingIndex] = MapEntry(key, value);
       return (node: mutableNode, didAdd: false);
     } else {
-      // Add new entry to the list (in place)
+      // Add new entry to the list (in place if transient)
       mutableNode.entries.add(MapEntry(key, value));
       return (node: mutableNode, didAdd: true);
     }
@@ -339,7 +432,9 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
 
     final mutableNode = ensureMutable(owner);
     final initialLength = mutableNode.entries.length;
-    mutableNode.entries.removeWhere((e) => e.key == key); // Mutate in place
+    mutableNode.entries.removeWhere(
+      (e) => e.key == key,
+    ); // Mutate in place if transient
     final removed = mutableNode.entries.length < initialLength;
 
     if (!removed) {
@@ -347,10 +442,9 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       return (node: mutableNode, didRemove: false);
     }
 
-    // If only one entry remains, convert back to DataNode
+    // If only one entry remains, convert back to an immutable DataNode
     if (mutableNode.entries.length == 1) {
       final lastEntry = mutableNode.entries.first;
-      // Create immutable DataNode
       final dataNode = ChampDataNode<K, V>(
         collisionHash,
         lastEntry.key,
@@ -359,7 +453,7 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       return (node: dataNode, didRemove: true);
     }
 
-    // Otherwise, return the modified (mutable) collision node
+    // Otherwise, return the modified (potentially mutable) collision node
     return (node: mutableNode, didRemove: true);
   }
 
@@ -375,7 +469,7 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
     if (hash != collisionHash) {
       // Hash doesn't match this collision node
       if (ifAbsentFn != null) {
-        // Add as a new entry (will create an internal node)
+        // Add as a new entry (will create an internal node to split)
         final newValue = ifAbsentFn();
         final dataNode = ChampDataNode<K, V>(hash, key, newValue);
         final newNode = ChampInternalNode<K, V>.fromNodes(
@@ -403,13 +497,13 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       if (newValue == currentValue) {
         return (node: mutableNode, sizeChanged: false); // No change
       }
-      // Mutate in place
+      // Mutate in place if transient
       mutableNode.entries[existingIndex] = MapEntry(key, newValue);
       return (node: mutableNode, sizeChanged: false);
     } else if (ifAbsentFn != null) {
       // Key not found, add using ifAbsentFn
       final newValue = ifAbsentFn();
-      // Mutate in place
+      // Mutate in place if transient
       mutableNode.entries.add(MapEntry(key, newValue));
       return (node: mutableNode, sizeChanged: true);
     } else {
@@ -419,6 +513,7 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
   }
 
   /// Returns this node if mutable and owned, otherwise a mutable copy.
+  /// Used for transient operations.
   ChampCollisionNode<K, V> ensureMutable(TransientOwner? owner) {
     if (isTransient(owner)) {
       return this;
@@ -445,23 +540,36 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
 
 // --- Internal Node ---
 
-/// Represents an internal node in the CHAMP Trie.
-/// Uses bitmaps (`dataMap`, `nodeMap`) to track the presence of data entries
-/// and sub-nodes at each possible hash fragment index.
+/// Represents an internal node (branch) in the CHAMP Trie.
+///
+/// Uses two bitmaps, [dataMap] and [nodeMap], to efficiently track whether a
+/// given hash fragment corresponds to a direct data entry (key-value pair) or
+/// a child node stored in the [content] list.
+///
+/// The [content] list stores data entries interleaved (key, value, key, value...)
+/// followed by child nodes ([ChampNode]). The indices are calculated based on the
+/// population count ([bitCount]) of the bitmaps.
 class ChampInternalNode<K, V> extends ChampNode<K, V> {
-  /// Bitmap indicating which fragments correspond to data entries.
-  int dataMap; // Made mutable
+  /// Bitmap indicating which hash fragments correspond to data entries in [content].
+  int dataMap; // Made mutable for transient ops
 
-  /// Bitmap indicating which fragments correspond to sub-nodes.
-  int nodeMap; // Made mutable
+  /// Bitmap indicating which hash fragments correspond to child nodes in [content].
+  int nodeMap; // Made mutable for transient ops
 
   /// Array storing data entries (key, value pairs) and sub-nodes.
-  /// Data entries are stored first, followed by sub-nodes.
-  /// Data: [k1, v1, k2, v2, ...]
-  /// Nodes: [..., nodeA, nodeB, ...]
-  List<Object?> content; // Made mutable
+  /// Data entries are stored first, ordered by their hash fragment index,
+  /// followed by sub-nodes, also ordered by their hash fragment index.
+  /// Data: `[k1, v1, k2, v2, ...]`
+  /// Nodes: `[..., nodeA, nodeB, ...]`
+  /// This list is mutable only if the node is transient.
+  List<Object?> content; // Made mutable for transient ops
 
-  // Constructor ensures content is mutable if owned, otherwise unmodifiable
+  /// Creates an internal CHAMP node.
+  ///
+  /// - [dataMap]: Bitmap for data entries.
+  /// - [nodeMap]: Bitmap for child nodes.
+  /// - [content]: The combined list of data payloads and child nodes, ordered correctly.
+  /// - [owner]: Optional [TransientOwner] for mutability.
   ChampInternalNode(
     this.dataMap,
     this.nodeMap,
@@ -472,8 +580,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     : content = (owner != null) ? content : List.unmodifiable(content),
        super(owner);
 
-  /// Factory constructor to create an internal node from two initial nodes.
-  /// Used when a data node collides or a collision node needs to split.
+  /// Factory constructor to create an internal node from two initial child nodes
+  /// that have different hash fragments at the current [shift] level.
+  /// Used when merging data entries or splitting collision nodes.
   factory ChampInternalNode.fromNodes(
     int shift,
     int hash1,
@@ -499,6 +608,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       newContent = [node2, node1];
     }
 
+    // Create the new internal node (potentially transient if owner is provided)
     return ChampInternalNode<K, V>(
       0, // No data entries initially
       newNodeMap,
@@ -509,11 +619,22 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- Helper methods for index calculation ---
 
+  /// Calculates the index within the data portion of the [content] list
+  /// corresponding to a given hash fragment [frag].
   int dataIndexFromFragment(int frag) => bitCount(dataMap & ((1 << frag) - 1));
+
+  /// Calculates the index within the node portion of the [content] list
+  /// corresponding to a given hash fragment [frag].
   int nodeIndexFromFragment(int frag) => bitCount(nodeMap & ((1 << frag) - 1));
+
+  /// Calculates the starting index in the [content] list for a data entry,
+  /// given its index within the conceptual data array ([dataIndex]).
   int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
+
+  /// Calculates the index in the [content] list for a child node,
+  /// given its index within the conceptual node array ([nodeIndex]).
   int contentIndexFromNodeIndex(int nodeIndex) =>
-      (bitCount(dataMap) * 2) + nodeIndex;
+      (bitCount(dataMap) * 2) + nodeIndex; // Data entries come first
 
   // --- Core Methods ---
 
@@ -1082,6 +1203,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   /// Returns this node if it's mutable and owned by [owner],
   /// otherwise returns a new mutable copy owned by [owner].
+  /// Used for transient operations.
   ChampInternalNode<K, V> ensureMutable(TransientOwner? owner) {
     if (isTransient(owner)) {
       return this;
@@ -1111,8 +1233,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       }
       // If owned, become immutable by removing the owner
       this._owner = null; // Use 'this._owner' to modify the instance field
-      // Make content list unmodifiable
-      this.content = List.unmodifiable(content);
+      // Content list reference remains the same, but node is now immutable.
+      // No need to copy with List.unmodifiable.
       return this;
     }
     // If not owned or already immutable, return as is.
@@ -1178,6 +1300,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- In-place mutation helpers (only call when isTransient(owner) is true) ---
 
+  /// Inserts a data entry (key/value pair) into the [content] list at the
+  /// correct position based on its [dataIndex]. Updates the [dataMap].
+  /// Assumes the node is transient and owned.
   void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
     assert(isTransient(_owner));
     final dataPayloadIndex = dataIndex * 2;
@@ -1187,6 +1312,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     dataMap |= bitpos;
   }
 
+  /// Removes a data entry (key/value pair) from the [content] list based on
+  /// its [dataIndex]. Updates the [dataMap].
+  /// Assumes the node is transient and owned.
   void _removeDataEntryInPlace(int dataIndex, int bitpos) {
     assert(isTransient(_owner));
     final dataPayloadIndex = dataIndex * 2;
@@ -1196,6 +1324,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     dataMap ^= bitpos;
   }
 
+  /// Removes a child node entry from the [content] list based on its [nodeIndex].
+  /// Updates the [nodeMap].
+  /// Assumes the node is transient and owned.
   void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
     assert(isTransient(_owner));
     final dataEndIndex = bitCount(dataMap) * 2;
@@ -1207,6 +1338,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   }
 
   /// Replaces a data entry with a sub-node (in place).
+  /// Used when a hash collision occurs during a transient add/update.
+  /// Assumes the node is transient and owned.
   void _replaceDataWithNodeInPlace(
     int dataIndex,
     ChampNode<K, V> subNode,
@@ -1245,6 +1378,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   }
 
   /// Replaces a node entry with a data entry (in place).
+  /// Used when a child node collapses to a data node during a transient remove.
+  /// Assumes the node is transient and owned.
   void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
     assert(isTransient(_owner));
     final dataPayloadIndex =
@@ -1264,6 +1399,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   /// Checks if the node needs shrinking after a removal and performs it (in place).
   /// Returns the potentially new node (e.g., if collapsed to DataNode or EmptyNode).
+  /// Assumes the node is transient and owned.
   ChampNode<K, V>? _shrinkIfNeeded(TransientOwner? owner) {
     assert(isTransient(owner)); // Should only be called transiently
 
@@ -1299,6 +1435,14 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 // --- Merging Logic ---
 
 /// Merges two data entries into a new node (Internal or Collision).
+/// This is used when adding a new entry results in a collision with an existing
+/// [ChampDataNode] or when splitting nodes during bulk loading.
+///
+/// - [shift]: The current bit shift level where the collision/merge occurs.
+/// - [hash1], [key1], [value1]: Details of the first entry.
+/// - [hash2], [key2], [value2]: Details of the second entry.
+///
+/// Returns an immutable [ChampInternalNode] or [ChampCollisionNode].
 ChampNode<K, V> mergeDataEntries<K, V>(
   int shift,
   int hash1,

@@ -36,9 +36,10 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   ///
   /// The key-value pairs from the source map are copied into the new `ApexMap`.
   ///
-  /// This factory uses an efficient bulk-loading algorithm (O(N log N) due to
-  /// sorting) for improved performance when creating maps from large sources,
-  /// compared to iteratively adding entries.
+  /// **Note:** The current bulk-loading implementation (`ApexMapImpl.fromMap`)
+  /// has a **severe performance issue** and is much slower than expected
+  /// (significantly worse than O(N)). It requires profiling and fixing.
+  /// The intended complexity is O(N).
   ///
   /// ```dart
   /// final sourceMap = {'a': 1, 'b': 2};
@@ -63,11 +64,10 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   factory ApexMap.fromEntries(Iterable<MapEntry<K, V>> entries) {
     // Implementation uses transient building for efficiency.
     // Delegate to the implementation's factory constructor.
-    // Note: ApexMapImpl.fromEntries is not explicitly defined, but fromMap handles this.
-    // We can create a Map first for simplicity in the API layer.
+    // Note: ApexMapImpl.fromEntries is not explicitly defined.
+    // This implementation creates an intermediate Map, which might not be optimal.
+    // It also inherits the performance issue from ApexMap.fromMap.
     return ApexMapImpl.fromMap(Map.fromEntries(entries));
-    // Or, if ApexMapImpl had a dedicated fromEntries:
-    // return ApexMapImpl.fromEntries(entries);
   }
 
   // --- Core Properties ---

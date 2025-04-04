@@ -1,76 +1,130 @@
-/// Defines the core structures for RRB-Tree nodes used by ApexList.
+/// Defines the core structures for Relaxed Radix Balanced Tree (RRB-Tree) nodes
+/// used internally by [ApexList].
+///
+/// This library contains the abstract [RrbNode] base class and its concrete
+/// implementations: [RrbInternalNode] for branches and [RrbLeafNode] for leaves.
+/// It also includes constants like [kBranchingFactor] and helper classes like
+/// [TransientOwner] for managing transient mutations.
 library;
 
+/// The branching factor (M) for the RRB-Tree. Determines the maximum number
+/// of children an internal node can have or elements a leaf node can hold.
+/// Typically a power of 2, often 32 for good performance characteristics.
 const int kBranchingFactor = 32; // Or M, typically 32
+
+/// The base-2 logarithm of the [kBranchingFactor]. Used for efficient index
+/// calculations within the tree structure (log2(32) = 5).
 const int kLog2BranchingFactor = 5; // log2(32)
 
 // --- Transient Ownership ---
 
-/// A marker object to track ownership for transient mutations.
+/// A marker object used to track ownership during transient (mutable) operations
+/// on RRB-Tree nodes.
+///
+/// When performing bulk operations like `addAll` or `fromIterable`, nodes can be
+/// temporarily mutated in place if they share the same [TransientOwner]. This
+/// avoids excessive copying and improves performance. Once the operation is
+/// complete, the tree is "frozen" back into an immutable state using [RrbNode.freeze].
 class TransientOwner {
+  /// Creates a new unique owner instance.
   const TransientOwner();
 }
 
-/// Base class for RRB-Tree nodes.
+/// Abstract base class for nodes in the Relaxed Radix Balanced Tree (RRB-Tree).
+///
+/// Nodes can be either internal ([RrbInternalNode]) containing child nodes,
+/// or leaf ([RrbLeafNode]) nodes containing the actual list elements.
+/// Nodes are immutable by default but support transient mutation via the
+/// [TransientOwner] mechanism for performance optimization during bulk updates.
 abstract class RrbNode<E> {
-  /// Optional owner for transient nodes. If non-null, this node might be mutable.
+  /// Optional owner for transient nodes. If non-null, this node might be mutable
+  /// by the holder of this specific [TransientOwner] instance.
   TransientOwner? _owner; // Made mutable for freezing
 
-  /// Constructor for subclasses.
+  /// Constructor for subclasses. Assigns an optional [owner] for transient state.
   RrbNode([this._owner]); // Changed to non-const
 
   /// The height of the subtree rooted at this node.
-  /// Leaf nodes have height 0.
+  /// Leaf nodes ([RrbLeafNode]) have height 0. Internal nodes have height > 0.
   int get height;
 
-  /// The total number of elements in the subtree rooted at this node.
+  /// The total number of elements stored in the subtree rooted at this node.
   int get count;
 
-  /// Whether this node represents a leaf (contains elements directly).
+  /// Returns `true` if this node is a leaf node ([RrbLeafNode]).
   bool get isLeaf => height == 0;
 
-  /// Whether this node represents an internal branch (contains child nodes).
+  /// Returns `true` if this node is an internal node ([RrbInternalNode]).
   bool get isBranch => height > 0;
 
   /// Retrieves the element at the effective [index] within this subtree.
-  /// The [index] must be valid within the bounds of this node's [count].
+  ///
+  /// The [index] is relative to the start of the elements covered by this node.
+  /// It must be non-negative and less than this node's [count].
+  /// Complexity: O(log N) due to tree traversal.
   E get(int index);
 
   /// Returns a new node structure representing the tree after updating the
   /// element at the effective [index] within this subtree with the new [value].
-  /// The [index] must be valid within the bounds of this node's [count].
+  ///
+  /// The [index] must be non-negative and less than this node's [count].
+  /// Returns `this` if the value is identical to the existing value.
+  /// Complexity: O(log N).
   RrbNode<E> update(int index, E value);
 
   /// Returns a new node structure representing the tree after appending [value]
   /// to the end of the subtree represented by this node.
-  /// This might involve node splits and increasing tree height.
+  ///
+  /// This might involve node splits and increasing tree height if nodes are full.
+  /// Complexity: Amortized O(log N), potentially O(1) with tail optimizations.
   RrbNode<E> add(E value);
 
   /// Returns a new node structure representing the tree after removing the
   /// element at the effective [index] within this subtree.
-  /// The [index] must be valid within the bounds of this node's [count].
-  /// This might involve node merges and decreasing tree height.
+  ///
+  /// The [index] must be non-negative and less than this node's [count].
+  /// This might involve node merges, rebalancing, and decreasing tree height.
   /// Returns `null` if the node becomes empty after removal.
+  /// Accepts an optional [owner] for transient operations.
+  /// Complexity: O(log N).
   RrbNode<E>? removeAt(int index, [TransientOwner? owner]); // Added owner
 
-  /// Returns true if this node represents the canonical empty node.
+  /// Returns `true` if this node represents an empty tree structure.
+  ///
+  /// Only the canonical empty leaf node should return true.
   bool get isEmptyNode => false;
 
-  /// Returns true if this node is marked as transient and owned by [owner].
+  /// Returns `true` if this node is currently mutable and belongs to the
+  /// specified [owner].
   bool isTransient(TransientOwner? owner) => owner != null && _owner == owner;
 
   /// Returns an immutable version of this node.
+  ///
+  /// If the node is transient and owned by the provided [owner], it recursively
+  /// freezes its children (if any), clears its owner, makes its internal lists
+  /// unmodifiable, and returns itself. Otherwise, returns `this`.
   RrbNode<E> freeze(TransientOwner? owner);
 
   /// Returns a new node structure representing the tree after inserting [value]
   /// at the effective [index] within this subtree.
-  /// The [index] must be valid (0 <= index <= count).
+  ///
+  /// The [index] must be non-negative and less than or equal to this node's [count].
   /// This might involve node splits and increasing tree height.
+  /// Complexity: O(log N).
   RrbNode<E> insertAt(int index, E value);
 }
 
 /// Represents an internal node (branch) in the RRB-Tree.
-/// Contains references to child nodes and potentially a size table if relaxed.
+///
+/// Internal nodes contain references to child nodes ([children]), which can be
+/// either other internal nodes or leaf nodes ([RrbLeafNode]).
+/// They maintain the tree's structure and height.
+///
+/// A key feature of RRB-Trees is relaxation. If a node's children are not all
+/// "full" (i.e., containing the maximum possible elements for their height),
+/// the node becomes "relaxed" and stores a [sizeTable] to enable efficient
+/// O(log N) indexing despite the irregular child sizes. Strict nodes (where
+/// all children except possibly the last are full) do not need a size table.
 class RrbInternalNode<E> extends RrbNode<E> {
   @override
   final int height;
@@ -78,10 +132,25 @@ class RrbInternalNode<E> extends RrbNode<E> {
   @override
   int count; // Made non-final for transient mutation
 
-  // Made fields non-final and removed duplicates for transient mutability
+  /// The list of child nodes. Can contain [RrbInternalNode] or [RrbLeafNode].
+  /// This list is mutable only if the node is transient (has an owner).
   List<RrbNode<E>> children;
+
+  /// Optional table storing cumulative element counts for each child.
+  /// Present only if the node is "relaxed" (i.e., its children are not all full).
+  /// This list is mutable only if the node is transient.
   List<int>? sizeTable;
 
+  /// Creates an internal RRB-Tree node.
+  ///
+  /// - [height]: The height of this node (must be > 0).
+  /// - [count]: The total number of elements in the subtree rooted here.
+  /// - [children]: The list of child nodes.
+  /// - [sizeTable]: Optional cumulative size table if the node is relaxed.
+  /// - [owner]: Optional [TransientOwner] if creating a mutable transient node.
+  ///
+  /// If an [owner] is provided, the [children] and [sizeTable] lists are kept
+  /// mutable. Otherwise, they are converted to unmodifiable lists.
   RrbInternalNode(
     this.height,
     this.count,
@@ -98,7 +167,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
        assert(sizeTable == null || sizeTable.length == children.length),
        super(owner);
 
-  /// Indicates if this node requires a size table for relaxed radix search.
+  /// Returns `true` if this node is relaxed (uses a size table).
   bool get isRelaxed => sizeTable != null;
 
   @override
@@ -636,9 +705,10 @@ class RrbInternalNode<E> extends RrbNode<E> {
         final rightChildren = newChildren.sublist(splitPoint);
         final leftSizeTable = _computeSizeTableIfNeeded(leftChildren);
         final rightSizeTable = _computeSizeTableIfNeeded(rightChildren);
+        // Ensure count is non-nullable with default 0
         int leftCount =
             leftSizeTable?.last ??
-            leftChildren.fold(0, (sum, node) => sum + node.count);
+            leftChildren.fold<int>(0, (sum, node) => sum + (node.count ?? 0));
         int rightCount = newCount - leftCount;
         final newLeftNode = RrbInternalNode<E>(
           height,
@@ -662,10 +732,12 @@ class RrbInternalNode<E> extends RrbNode<E> {
   }
 
   /// Returns this node if mutable and owned, otherwise a mutable copy.
+  /// Used for transient operations.
   RrbInternalNode<E> ensureMutable(TransientOwner? owner) {
     if (isTransient(owner)) {
       return this;
     }
+    // Create a mutable copy with the new owner
     return RrbInternalNode<E>(
       height,
       count,
@@ -678,16 +750,22 @@ class RrbInternalNode<E> extends RrbNode<E> {
   @override
   RrbNode<E> freeze(TransientOwner? owner) {
     if (isTransient(owner)) {
+      // If owned, become immutable
       for (int i = 0; i < children.length; i++) {
+        // Recursively freeze children
         children[i] = children[i].freeze(owner);
       }
-      this._owner = null;
-      this.children = List.unmodifiable(children);
+      this._owner = null; // Clear owner
+      this.children = List.unmodifiable(
+        children,
+      ); // Make children list immutable
       if (sizeTable != null) {
+        // Make size table immutable if it exists
         this.sizeTable = List.unmodifiable(sizeTable!);
       }
       return this;
     }
+    // Already immutable or not owned by the freezer
     return this;
   }
 
@@ -699,11 +777,10 @@ class RrbInternalNode<E> extends RrbNode<E> {
   ///
   /// For the transient path (`owner != null`), this method modifies the `children`
   /// and `sizeTable` lists directly.
-  /// For the immutable path (`owner == null`), this method should technically
-  /// return the *new* children and sizeTable lists, but the current `removeAt`
-  /// implementation doesn't handle that return value yet. We'll focus on the
-  /// logic first and adapt the return later if needed for immutability.
-  /// Returns the potentially modified children and sizeTable lists for the immutable path.
+  /// For the immutable path (`owner == null`), this method returns the *new*
+  /// children and sizeTable lists resulting from the operation.
+  ///
+  /// Returns a tuple containing the potentially modified children list and size table.
   (List<RrbNode<E>>, List<int>?) _rebalanceOrMerge(
     int slot,
     List<RrbNode<E>> children, // The list of children (mutable if transient)
@@ -955,12 +1032,89 @@ class RrbInternalNode<E> extends RrbNode<E> {
           print('Immutable Steal (left-to-right) completed.');
           return (newParentChildren, newParentSizeTable);
         } else {
-          // Cannot steal (e.g., both are minimal size, or types incompatible for merge/steal)
-          // This might indicate a logic error or a need for more complex balancing.
-          // For now, return unmodified nodes. This might lead to incorrect structure later.
-          print('Cannot merge or steal for slot $slot - Returning unmodified.');
-          return (children, sizeTable);
-          // throw UnimplementedError('Cannot steal - Edge case not handled');
+          // Cannot steal: Merge the two nodes even if oversized, then split.
+          print('Cannot steal for slot $slot - Performing Merge-Split.');
+
+          // 1. Merge node1 and node2 (similar to 'canMerge' logic)
+          RrbNode<E> mergedNode;
+          if (node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) {
+            final combinedElements = [...node1.elements, ...node2.elements];
+            // Create potentially oversized leaf
+            mergedNode = RrbLeafNode<E>(combinedElements);
+          } else if (node1 is RrbInternalNode<E> &&
+              node2 is RrbInternalNode<E> &&
+              node1.height == node2.height) {
+            final combinedChildren = [...node1.children, ...node2.children];
+            // Create potentially oversized internal node (size table calculated later)
+            mergedNode = RrbInternalNode<E>(
+              node1.height,
+              combinedCount,
+              combinedChildren,
+              null,
+            );
+          } else {
+            throw StateError(
+              'Cannot merge-split nodes of different types or heights: ${node1.runtimeType} and ${node2.runtimeType}',
+            );
+          }
+
+          // 2. Split the mergedNode into two new nodes
+          RrbNode<E> newNode1;
+          RrbNode<E> newNode2;
+          if (mergedNode is RrbLeafNode<E>) {
+            final splitPoint = (mergedNode.elements.length + 1) ~/ 2;
+            final leftElements = mergedNode.elements.sublist(0, splitPoint);
+            final rightElements = mergedNode.elements.sublist(splitPoint);
+            newNode1 = RrbLeafNode<E>(leftElements);
+            newNode2 = RrbLeafNode<E>(rightElements);
+          } else if (mergedNode is RrbInternalNode<E>) {
+            final splitPoint = (mergedNode.children.length + 1) ~/ 2;
+            final leftChildren = mergedNode.children.sublist(0, splitPoint);
+            final rightChildren = mergedNode.children.sublist(splitPoint);
+            // Recalculate counts and size tables for split nodes
+            final newNode1SizeTable = _computeSizeTableIfNeeded(leftChildren);
+            final newNode2SizeTable = _computeSizeTableIfNeeded(rightChildren);
+            // Ensure count is non-nullable with default 0
+            final newNode1Count =
+                newNode1SizeTable?.last ??
+                leftChildren.fold<int>(
+                  0,
+                  (sum, node) => sum + (node.count ?? 0),
+                );
+            // Ensure count is non-nullable with default 0
+            final newNode2Count =
+                combinedCount -
+                (newNode1Count ?? 0); // Use default if newNode1Count is null
+
+            newNode1 = RrbInternalNode<E>(
+              mergedNode.height,
+              newNode1Count ?? 0,
+              leftChildren,
+              newNode1SizeTable,
+            );
+            newNode2 = RrbInternalNode<E>(
+              mergedNode.height,
+              newNode2Count,
+              rightChildren,
+              newNode2SizeTable,
+            );
+          } else {
+            // Should not happen
+            throw StateError('Merged node is of unexpected type during split');
+          }
+
+          // 3. Create new parent children list
+          final newParentChildren = List<RrbNode<E>>.of(children);
+          newParentChildren[slot] = newNode1;
+          newParentChildren[slot + 1] = newNode2;
+
+          // 4. Recalculate parent's size table
+          final newParentSizeTable = _computeSizeTableIfNeeded(
+            newParentChildren,
+          );
+
+          print('Immutable Merge-Split completed.');
+          return (newParentChildren, newParentSizeTable);
         }
         // Fallback throw if no steal logic path was taken (shouldn't happen with current checks)
         // throw UnimplementedError('Immutable Steal logic path missed');
@@ -978,13 +1132,23 @@ class RrbLeafNode<E> extends RrbNode<E> {
   @override
   int get count => elements.length;
 
+  /// The list of elements stored directly in this leaf.
+  /// This list is mutable only if the node is transient (has an owner).
   List<E> elements;
 
+  /// The canonical empty leaf node instance (typed as `Never`).
   static final RrbLeafNode<Never> emptyInstance = RrbLeafNode<Never>._internal(
     const [],
     null,
   );
 
+  /// Creates a leaf RRB-Tree node.
+  ///
+  /// - [elements]: The list of elements for this leaf. Must not exceed [kBranchingFactor].
+  /// - [owner]: Optional [TransientOwner] if creating a mutable transient node.
+  ///
+  /// If an [owner] is provided, the [elements] list is kept mutable.
+  /// Otherwise, it is converted to an unmodifiable list.
   RrbLeafNode(List<E> elements, [TransientOwner? owner])
     : elements =
           (owner != null || elements.isEmpty)
@@ -993,6 +1157,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
       assert(elements.length <= kBranchingFactor),
       super(owner);
 
+  /// Internal constructor used only for the canonical empty instance.
   RrbLeafNode._internal(this.elements, TransientOwner? owner) : super(owner);
 
   @override
@@ -1018,7 +1183,9 @@ class RrbLeafNode<E> extends RrbNode<E> {
       final newElements = List<E>.of(elements)..add(value);
       return RrbLeafNode<E>(newElements);
     } else {
+      // Leaf is full, split into a new parent internal node
       final newLeaf = RrbLeafNode<E>([value]);
+      // New parent has height 1, count = old count + 1, children = [this, newLeaf]
       return RrbInternalNode<E>(1, count + 1, [this, newLeaf], null);
     }
   }
@@ -1032,6 +1199,7 @@ class RrbLeafNode<E> extends RrbNode<E> {
       final mutableNode = ensureMutable(owner);
       assert(index < mutableNode.elements.length, "Index out of bounds");
       if (mutableNode.elements.length == 1) {
+        // Removing the last element makes the node empty
         return null;
       }
       mutableNode.elements.removeAt(index);
@@ -1039,9 +1207,11 @@ class RrbLeafNode<E> extends RrbNode<E> {
     } else {
       // --- Immutable Path ---
       if (elements.length == 1) {
+        // Removing the last element makes the node empty
         return null;
       }
       final newElements = List<E>.of(elements)..removeAt(index);
+      // Return a new immutable leaf node
       return RrbLeafNode<E>(newElements, null);
     }
   }
@@ -1051,10 +1221,11 @@ class RrbLeafNode<E> extends RrbNode<E> {
     assert(index >= 0 && index <= count);
 
     if (elements.length < kBranchingFactor) {
+      // Leaf has space, insert directly
       final newElements = List<E>.of(elements)..insert(index, value);
       return RrbLeafNode<E>(newElements);
     } else {
-      // Leaf needs to split
+      // Leaf is full, needs to split
       final tempElements = List<E>.of(elements)..insert(index, value);
       final splitPoint = (kBranchingFactor + 1) ~/ 2;
       final leftElements = tempElements.sublist(0, splitPoint);
@@ -1070,20 +1241,26 @@ class RrbLeafNode<E> extends RrbNode<E> {
   }
 
   /// Returns this node if mutable and owned, otherwise a mutable copy.
+  /// Used for transient operations.
   RrbLeafNode<E> ensureMutable(TransientOwner? owner) {
     if (isTransient(owner)) {
       return this;
     }
+    // Create a mutable copy with the new owner
     return RrbLeafNode<E>(List<E>.of(elements), owner);
   }
 
   @override
   RrbNode<E> freeze(TransientOwner? owner) {
     if (isTransient(owner)) {
+      // If owned, become immutable
       this._owner = null;
-      this.elements = List.unmodifiable(elements);
+      this.elements = List.unmodifiable(
+        elements,
+      ); // Make internal list immutable
       return this;
     }
+    // Already immutable or not owned by the freezer
     return this;
   }
 } // End of RrbLeafNode

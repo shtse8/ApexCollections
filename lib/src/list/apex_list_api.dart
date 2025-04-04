@@ -14,8 +14,8 @@ import 'apex_list.dart'; // Contains ApexListImpl and its _emptyInstance
 /// - Update (`update`): O(log N)
 /// - Insertion/Removal (`insert`, `removeAt`): O(log N)
 /// - Append (`add`): Amortized O(1)
-/// - Concatenation (`+`): O(log N) - *Currently implemented via iteration/rebuild O(N+M)*
-/// - Slicing (`sublist`): O(log N) - *Currently implemented via iteration/rebuild O(M)*
+/// - Concatenation (`+`): O(log N)
+/// - Slicing (`sublist`): O(log N)
 /// - Iteration: O(N)
 ///
 /// It implements the standard Dart [Iterable] interface.
@@ -40,7 +40,8 @@ abstract class ApexList<E> implements Iterable<E> {
 
   /// Creates an `ApexList` from an existing [Iterable].
   ///
-  /// The elements from the iterable are copied into the new list.
+  /// The elements from the iterable are copied into the new list using an
+  /// efficient O(N) bottom-up construction algorithm.
   /// The iteration order of the iterable determines the order in the list.
   ///
   /// ```dart
@@ -53,14 +54,8 @@ abstract class ApexList<E> implements Iterable<E> {
   /// print(apexListFromSet); // ApexList(4, 5, 6) - order depends on Set iteration
   /// ```
   factory ApexList.from(Iterable<E> elements) {
-    // TODO: Implementation using a transient builder for efficiency
-    if (elements.isEmpty) return ApexList.empty();
-    // Placeholder for the actual implementation class constructor
+    // Delegates to the efficient ApexListImpl.fromIterable factory.
     return ApexListImpl<E>.fromIterable(elements);
-    // For now, let's assume ApexListImpl exists in apex_list.dart
-    // This requires apex_list.dart to define ApexListImpl<E> eventually.
-    // We'll use a temporary placeholder return for API definition purposes.
-    // throw UnimplementedError('ApexListImpl.fromIterable needs implementation'); // Removed throw
   }
 
   /// Creates an `ApexList` with the given elements.
@@ -211,8 +206,7 @@ abstract class ApexList<E> implements Iterable<E> {
   ///
   /// If [end] is omitted, it defaults to the [length] of the list.
   /// The [start] and [end] indices must satisfy `0 <= start <= end <= length`.
-  /// Complexity is O(log N + M) where M is the length of the sublist.
-  /// *Currently implemented via iteration/rebuild O(M)*.
+  /// This operation has O(log N) complexity.
   ///
   /// ```dart
   /// final list1 = ApexList.of([0, 1, 2, 3, 4]);
@@ -235,8 +229,7 @@ abstract class ApexList<E> implements Iterable<E> {
 
   /// Returns a new list representing the concatenation of this list and [other].
   ///
-  /// Efficient concatenation (O(log N)) is a potential feature of RRB-Trees,
-  /// but the current implementation iterates and rebuilds (O(N+M)).
+  /// This operation uses efficient O(log N) tree concatenation.
   ///
   /// ```dart
   /// final list1 = ApexList.of([1, 2]);
