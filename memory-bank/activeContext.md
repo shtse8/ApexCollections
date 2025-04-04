@@ -19,41 +19,47 @@
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
-        -   **(Known Issue)** List Test Runtime Error: Now throws `StateError: Cannot rebalance incompatible nodes (cannot merge/steal)...` in `RrbInternalNode._rebalanceOrMerge` (changed from `UnimplementedError` as an interim step). The specific case where nodes cannot be merged or stolen due to type/height mismatch remains unhandled. Requires significant refactor/research of rebalancing logic. The transient path also remains unimplemented.
-    -   **Performance Status (Updated 2025-04-04 ~10:41 UTC+1):**
-        -   **ApexMap (Size: 10k):**
-            -   `add`: ~4.02 us (Slower than Native/FIC)
-            -   `addAll`: ~29.49 us (Excellent)
-            -   `lookup[]`: ~0.23 us (Slower than Native/FIC)
-            -   `remove`: ~3.61 us (Slower than Native/FIC)
-            -   `update`: ~8.16 us (Slower than Native/FIC)
+        -   **(Resolved)** List Test Runtime Error: The `StateError: Cannot rebalance incompatible nodes...` in `RrbInternalNode._rebalanceOrMerge` has been addressed by implementing a plan-based rebalancing strategy (`_createRebalancePlan`, `_executeRebalancePlan`) for the immutable path. All `apex_list_test.dart` tests now pass.
+        -   **(Known Issue)** The transient path for `_rebalanceOrMerge` (plan-based case) uses immutable node creation logic instead of mutating in place. Needs optimization.
+    -   **Performance Status (Updated 2025-04-04 ~11:07 UTC+1 - Post `_rebalanceOrMerge` Fix):**
+        -   **ApexMap (Size: 10k):** (No changes)
+            -   `add`: ~4.02 us
+            -   `addAll`: ~29.49 us
+            -   `lookup[]`: ~0.23 us
+            -   `remove`: ~3.61 us
+            -   `update`: ~8.16 us
             -   `iterateEntries`: ~2497 us
             -   `toMap`: ~8413 us
-            -   `fromMap`: ~7427 us (Improved vs previous, but still slower than FIC)
-            -   *Conclusion:* `_buildNode` refactor provides ~10-15% `fromMap` improvement. Micro-optimizations (`containsKey`, `bitCount`) had minimal impact. Single-element ops remain slow.
+            -   `fromMap`: ~7427 us
+            -   *Conclusion:* Single-element ops remain slow compared to competitors.
         -   **ApexList (Size: 10k):**
-            -   `add`: ~27.10 us
-            -   `addAll`: ~198.18 us
-            -   `lookup[]`: ~0.35 us
-            -   `removeAt`: ~17.38 us (Note: May be affected by known bug)
-            -   `removeWhere`: ~2595 us
-            -   `iterateSum`: ~247.67 us
-            -   `sublist`: ~33.09 us (Excellent)
-            -   `concat(+)`: ~6.49 us (Excellent)
-            -   `toList`: ~744 us (Regression fixed, now competitive with FIC)
-            -   `fromIterable`: ~1991 us (Slower than FIC; optimization attempt reverted)
-            -   *Conclusion:* `toList` performance restored. `fromIterable` remains slow. Further list optimization blocked by `removeAt` bug.
+            -   `add`: ~28.8 us (Much faster than FIC)
+            -   `addAll`: ~192 us (Slower than FIC - Needs transient optimization)
+            -   `lookup[]`: ~0.37 us (Slower than FIC/Native)
+            -   `removeAt`: ~15.8 us (Excellent - Much faster than FIC/Native)
+            -   `removeWhere`: ~2348 us (Competitive)
+            -   `iterateSum`: ~245 us (Competitive)
+            -   `sublist`: ~30.1 us (Excellent - Much faster than FIC/Native)
+            -   `concat(+)`: ~5.7 us (Very good, slower than FIC)
+            -   `toList`: ~717 us (Competitive)
+            -   `fromIterable`: ~1794 us (Slower than FIC - Needs optimization)
+            -   *Conclusion:* Core rebalancing fix successful. `removeAt` and `sublist` show excellent performance. Key optimization areas are `addAll`/`fromIterable` (transient path) and `lookup[]`.
 
 ## Current Focus
 
--   **ApexList:** Addressing known issues (primarily the `_rebalanceOrMerge` implementation).
--   **Documentation:** Updating Memory Bank files (now complete for this step).
+-   **ApexList:** Addressed the core `_rebalanceOrMerge` bug for the immutable path. Transient path still needs implementation.
+-   **Testing:** Verified `ApexList` tests pass after rebalancing fix.
+-   **Benchmarking:** Ran `ApexList` benchmarks.
 
 ## Next Immediate Steps
 
-1.  **(DONE)** **Update Memory Bank:** Reflected recent fixes and current state in `progress.md` and `activeContext.md`.
-2.  **(Blocked / High Priority)** **FIX `_rebalanceOrMerge` Error:** Address the `UnimplementedError` for incompatible node rebalancing (immutable path) in `rrb_node.dart`. Also need to implement the transient path. (Requires significant refactor/research).
-3.  **(Done - Needs Benchmarking)** **Optimize `ApexList.fromIterable`:** Implemented node constructor changes to avoid `sublist` copies. (Optimization attempt reverted).
+1.  **(DONE)** **Update Memory Bank:** Reflected previous fixes and state.
+2.  **(DONE)** **FIX `_rebalanceOrMerge` Error (Immutable Path):** Implemented plan-based rebalancing. Verified with tests.
+3.  **(DONE)** **Implement `_rebalanceOrMerge` Transient Path (Merge/Steal):** Implemented merge/steal logic for transient path. Verified with tests.
+4.  **(DONE)** **Benchmark `ApexList`:** Ran benchmarks after fixes.
+5.  **(TODO / High Priority)** **Optimize `_rebalanceOrMerge` Transient Path (Plan-based):** Modify `_executeRebalancePlan` or create a transient version to mutate nodes in place instead of creating new ones for the final rebalancing case. This is key for `addAll`/`fromIterable` performance.
+6.  **(TODO / Medium Priority)** **Optimize `ApexList.fromIterable`:** Revisit bulk loading strategy alongside transient optimizations.
+7.  **(TODO / Medium Priority)** **Optimize `ApexList.lookup[]`:** Investigate tree traversal/indexing logic.
 4.  **(Lower Priority / Blocked by #2)** **Benchmark:** Re-run benchmarks once list implementation is stable. (Map benchmarks run during optimization attempts).
 5.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`/`remove`/`update`:** Explore further potential micro-optimizations in immutable path list handling or core logic.
 6.  **(Lower Priority)** **Investigate `ApexMap.fromMap`:** Revisit `_buildNode` refactor or explore alternative bulk load strategies.
@@ -64,4 +70,4 @@
 -   Need for transient/mutable builders?
     -   **ApexMap:** Decided - Low priority.
     -   **ApexList:** Decided - Worth exploring/implementing optimizations, pending iterator investigation.
--   How to correctly implement RRB-Tree rebalancing/merging/collapsing logic, especially for the immutable path in `removeAt` when nodes are incompatible (cannot merge/steal)? (Needs significant research/refactor - Related to Step 2 above)
+-   How to efficiently implement the *transient* plan-based rebalancing in `_rebalanceOrMerge` to avoid unnecessary node creation? (Related to Step 5 above)

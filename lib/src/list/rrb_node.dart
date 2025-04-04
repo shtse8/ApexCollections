@@ -7,6 +7,8 @@
 /// [TransientOwner] for managing transient mutations.
 library;
 
+import 'dart:math';
+
 /// The branching factor (M) for the RRB-Tree. Determines the maximum number
 /// of children an internal node can have or elements a leaf node can hold.
 /// Typically a power of 2, often 32 for good performance characteristics.
@@ -16,6 +18,9 @@ const int kBranchingFactor = 32; // Or M, typically 32
 /// calculations within the tree structure (log2(32) = 5).
 const int kLog2BranchingFactor = 5; // log2(32)
 
+/// Maximum allowed extra search steps for the Search Step Invariant.
+/// Used during rebalancing. A common value is 2.
+const int kEMax = 2;
 // --- Transient Ownership ---
 
 /// A marker object used to track ownership during transient (mutable) operations
@@ -143,17 +148,6 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
   /// Creates an internal RRB-Tree node, copying a range of children from an input list.
   /// Used primarily by the bulk loader (`ApexListImpl.fromIterable`).
-  ///
-  /// - [height]: The height of this node (must be > 0).
-  /// - [count]: The total number of elements in the subtree rooted here.
-  /// - [childrenInput]: The list containing child nodes from the previous level.
-  /// - [start]: The starting index (inclusive) in [childrenInput] for this node's children.
-  /// - [end]: The ending index (exclusive) in [childrenInput] for this node's children.
-  /// - [sizeTable]: Optional cumulative size table if the node is relaxed (must match the range length).
-  /// - [owner]: Optional [TransientOwner] if creating a mutable transient node.
-  ///
-  /// If an [owner] is provided, the internal [children] list is created as a mutable
-  /// copy of the specified range. Otherwise, it's created as an unmodifiable copy.
   factory RrbInternalNode.fromRange(
     int height,
     int count,
@@ -579,8 +573,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
     if (childHeight < 0 && children.any((c) => c is! RrbLeafNode)) {
       return null; // Should not happen with leaves
     }
-    if (childHeight < 0)
+    if (childHeight < 0) {
       return null; // All children must be leaves if height is 1
+    }
 
     final int expectedChildNodeSize =
         (childHeight == 0)
@@ -782,6 +777,13 @@ class RrbInternalNode<E> extends RrbNode<E> {
     );
   }
 
+  /// Updates the count of this node during transient operations.
+  /// Should only be called on a node owned by the current [owner].
+  void _transientSetCount(int newCount, TransientOwner? owner) {
+    assert(isTransient(owner), 'Cannot set count on non-transient node');
+    count = newCount;
+  }
+
   @override
   RrbNode<E> freeze(TransientOwner? owner) {
     if (isTransient(owner)) {
@@ -860,8 +862,261 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
     if (owner != null) {
       // --- Transient Path ---
-      // TODO: Implement transient merge/steal logic
-      throw UnimplementedError('Transient rebalance/merge not implemented');
+      // Ensure the parent node is mutable
+      final mutableParent = ensureMutable(owner);
+      // Use the mutable lists from the parent
+      final mutableChildren = mutableParent.children;
+      final mutableSizeTable = mutableParent.sizeTable;
+
+      if (canMerge) {
+        // Transient Merge Logic
+        RrbNode<E> mergedNode;
+        if (node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) {
+          // Merge leaves by creating a new mutable leaf with combined elements
+          final combinedElements = List<E>.of(node1.elements, growable: true)
+            ..addAll(node2.elements);
+          mergedNode = RrbLeafNode<E>._internal(
+            combinedElements,
+            owner,
+          ); // Pass owner
+        } else if (node1 is RrbInternalNode<E> &&
+            node2 is RrbInternalNode<E> &&
+            node1.height == node2.height) {
+          // Merge internal nodes by creating a new mutable internal node
+          final combinedChildren = List<RrbNode<E>>.of(
+            node1.children,
+            growable: true,
+          )..addAll(node2.children);
+          // Ensure children are potentially mutable if needed later
+          for (int k = 0; k < combinedChildren.length; ++k) {
+            if (combinedChildren[k]._owner != owner) {
+              // This might be overly aggressive if child doesn't need mutation,
+              // but safer for ensuring transient propagation if merge happens deep down.
+              // A more refined approach could check if child *will* be mutated.
+              // For now, ensure ownership for simplicity.
+              // Note: This assumes ensureMutable exists on RrbNode or subtypes handle it.
+              // We might need a way to make a node mutable without full copy if already owned.
+              // Let's assume ensureMutable handles this correctly for now.
+              // TODO: Revisit transient propagation efficiency.
+              if (combinedChildren[k] is RrbInternalNode<E>) {
+                combinedChildren[k] = (combinedChildren[k]
+                        as RrbInternalNode<E>)
+                    .ensureMutable(owner);
+              } else if (combinedChildren[k] is RrbLeafNode<E>) {
+                combinedChildren[k] = (combinedChildren[k] as RrbLeafNode<E>)
+                    .ensureMutable(owner);
+              }
+            }
+          }
+          final mergedNodeSizeTable = _computeSizeTableIfNeeded(
+            combinedChildren,
+          );
+          mergedNode = RrbInternalNode<E>(
+            node1.height,
+            combinedCount,
+            combinedChildren, // Already mutable list
+            mergedNodeSizeTable,
+            owner, // Pass owner
+          );
+        } else {
+          // Should not happen if canMerge is true
+          throw StateError(
+            '[Transient] Cannot merge nodes of different types or heights: ${node1.runtimeType} and ${node2.runtimeType}',
+          );
+        }
+
+        // Modify parent's children list in place
+        mutableChildren.removeAt(slot + 1);
+        mutableChildren[slot] = mergedNode;
+
+        // Update parent's size table in place if it exists
+        if (mutableSizeTable != null) {
+          // Remove entry for node2
+          mutableSizeTable.removeAt(slot + 1);
+          // Update entry for the new merged node and subsequent entries
+          int currentCumulative = (slot == 0) ? 0 : mutableSizeTable[slot - 1];
+          for (int k = slot; k < mutableSizeTable.length; k++) {
+            currentCumulative += mutableChildren[k].count;
+            mutableSizeTable[k] = currentCumulative;
+          }
+        }
+        // No need to return lists, mutation happened in place.
+        // The calling `removeAt` will handle returning the mutated parent.
+      } else {
+        // Transient Steal Logic (Rebalance)
+        if (node1.count < minSize && node2.count > minSize) {
+          // Steal from right (node2) to left (node1)
+          // Cast to specific types before calling ensureMutable
+          final mutableNode1 =
+              (node1 is RrbInternalNode<E>)
+                  ? (node1 as RrbInternalNode<E>).ensureMutable(owner)
+                  : (node1 as RrbLeafNode<E>).ensureMutable(owner);
+          final mutableNode2 =
+              (node2 is RrbInternalNode<E>)
+                  ? (node2 as RrbInternalNode<E>).ensureMutable(owner)
+                  : (node2 as RrbLeafNode<E>).ensureMutable(owner);
+
+          if (mutableNode1 is RrbLeafNode<E> &&
+              mutableNode2 is RrbLeafNode<E>) {
+            // Steal first element from node2 leaf
+            final elementToSteal = mutableNode2.elements.removeAt(0);
+            mutableNode1.elements.add(elementToSteal);
+          } else if (mutableNode1 is RrbInternalNode<E> &&
+              mutableNode2 is RrbInternalNode<E> &&
+              mutableNode1.height == mutableNode2.height) {
+            // Steal first child from node2 internal node
+            final childToSteal = mutableNode2.children.removeAt(0);
+            mutableNode1.children.add(childToSteal);
+            // Recalculate node1's size table (mutable)
+            mutableNode1.sizeTable = _computeSizeTableIfNeeded(
+              mutableNode1.children,
+            );
+            // Recalculate node2's size table (mutable)
+            mutableNode2.sizeTable = _computeSizeTableIfNeeded(
+              mutableNode2.children,
+            );
+          } else {
+            throw StateError(
+              '[Transient] Cannot steal between nodes of different types or heights: ${node1.runtimeType} and ${node2.runtimeType}',
+            );
+          }
+          // Update counts using the transient setter for internal nodes
+          if (mutableNode1 is RrbInternalNode<E>) {
+            mutableNode1._transientSetCount(mutableNode1.count + 1, owner);
+          }
+          if (mutableNode2 is RrbInternalNode<E>) {
+            mutableNode2._transientSetCount(mutableNode2.count - 1, owner);
+          }
+
+          // Update parent's size table (mutableSizeTable) if necessary
+          if (mutableSizeTable != null) {
+            int currentCumulative =
+                (slot == 0) ? 0 : mutableSizeTable[slot - 1];
+            for (int k = slot; k < mutableSizeTable.length; k++) {
+              currentCumulative +=
+                  mutableChildren[k].count; // Use updated counts
+              mutableSizeTable[k] = currentCumulative;
+            }
+          }
+          // Ensure the modified nodes are placed back (might be redundant if ensureMutable returned same instance)
+          mutableChildren[slot] = mutableNode1;
+          mutableChildren[slot + 1] = mutableNode2;
+        } else if (node2.count < minSize && node1.count > minSize) {
+          // Steal from left (node1) to right (node2)
+          // Cast to specific types before calling ensureMutable
+          final mutableNode1 =
+              (node1 is RrbInternalNode<E>)
+                  ? (node1 as RrbInternalNode<E>).ensureMutable(owner)
+                  : (node1 as RrbLeafNode<E>).ensureMutable(owner);
+          final mutableNode2 =
+              (node2 is RrbInternalNode<E>)
+                  ? (node2 as RrbInternalNode<E>).ensureMutable(owner)
+                  : (node2 as RrbLeafNode<E>).ensureMutable(owner);
+
+          if (mutableNode1 is RrbLeafNode<E> &&
+              mutableNode2 is RrbLeafNode<E>) {
+            // Steal last element from node1 leaf
+            final elementToSteal = mutableNode1.elements.removeLast();
+            mutableNode2.elements.insert(0, elementToSteal);
+          } else if (mutableNode1 is RrbInternalNode<E> &&
+              mutableNode2 is RrbInternalNode<E> &&
+              mutableNode1.height == mutableNode2.height) {
+            // Steal last child from node1 internal node
+            final childToSteal = mutableNode1.children.removeLast();
+            mutableNode2.children.insert(0, childToSteal);
+            // Recalculate node1's size table (mutable)
+            mutableNode1.sizeTable = _computeSizeTableIfNeeded(
+              mutableNode1.children,
+            );
+            // Recalculate node2's size table (mutable)
+            mutableNode2.sizeTable = _computeSizeTableIfNeeded(
+              mutableNode2.children,
+            );
+          } else {
+            throw StateError(
+              '[Transient] Cannot steal between nodes of different types or heights: ${node1.runtimeType} and ${node2.runtimeType}',
+            );
+          }
+          // Update counts using the transient setter for internal nodes
+          if (mutableNode1 is RrbInternalNode<E>) {
+            mutableNode1._transientSetCount(mutableNode1.count - 1, owner);
+          }
+          if (mutableNode2 is RrbInternalNode<E>) {
+            mutableNode2._transientSetCount(mutableNode2.count + 1, owner);
+          }
+
+          // Update parent's size table (mutableSizeTable) if necessary
+          if (mutableSizeTable != null) {
+            int currentCumulative =
+                (slot == 0) ? 0 : mutableSizeTable[slot - 1];
+            for (int k = slot; k < mutableSizeTable.length; k++) {
+              currentCumulative +=
+                  mutableChildren[k].count; // Use updated counts
+              mutableSizeTable[k] = currentCumulative;
+            }
+          }
+          // Ensure the modified nodes are placed back
+          mutableChildren[slot] = mutableNode1;
+          mutableChildren[slot + 1] = mutableNode2;
+        } else {
+          // Cannot merge or steal: Use plan-based rebalancing.
+          // TODO: Optimize transient plan execution to mutate/reuse nodes instead of creating new ones.
+          // For now, we use the immutable execution logic which creates new nodes,
+          // ensuring correctness but sacrificing potential transient performance gain here.
+
+          // 1. Define the nodes to rebalance (use the original node references)
+          final nodesToRebalance = [node1, node2];
+
+          // 2. Create the rebalancing plan
+          final plan = _createRebalancePlan(nodesToRebalance);
+
+          // 3. Execute the plan to get the new list of balanced nodes
+          // NOTE: This now attempts to mutate nodes in place via the transient plan executor.
+          final balancedNodes = _executeTransientRebalancePlan(
+            nodesToRebalance,
+            plan,
+            owner,
+          );
+
+          // 4. Modify parent's children list in place
+          mutableChildren.removeRange(
+            slot,
+            slot + 2,
+          ); // Remove original node1 and node2
+          mutableChildren.insertAll(
+            slot,
+            balancedNodes,
+          ); // Insert the balanced nodes
+
+          // 5. Update parent's size table (mutableSizeTable) if necessary
+          if (mutableSizeTable != null) {
+            // Safer approach: Recalculate the relevant part of the size table from scratch
+            int currentCumulative =
+                (slot == 0) ? 0 : mutableSizeTable[slot - 1];
+            for (int k = slot; k < mutableChildren.length; ++k) {
+              currentCumulative += mutableChildren[k].count;
+              if (k < mutableSizeTable.length) {
+                mutableSizeTable[k] = currentCumulative;
+              } else {
+                // This should not happen if sizeTable was correctly sized initially
+                // or handled during list modifications. For safety, add if needed.
+                // Requires sizeTable to be growable if created transiently.
+                // Let's assume ensureMutable handled this.
+                mutableSizeTable.add(currentCumulative);
+              }
+            }
+            // Adjust table length if nodes were removed overall
+            if (mutableChildren.length < mutableSizeTable.length) {
+              mutableSizeTable.removeRange(
+                mutableChildren.length,
+                mutableSizeTable.length,
+              );
+            }
+          }
+        }
+      }
+      // Return the original (potentially mutated) list references for the transient path.
+      return (mutableChildren, mutableSizeTable);
     } else {
       // --- Immutable Path ---
       if (canMerge) {
@@ -1048,111 +1303,441 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
           return (newParentChildren, newParentSizeTable);
         } else {
-          // Cannot steal: Attempt merge-then-split ONLY if nodes are compatible.
-          // If nodes are incompatible (different types/heights), this specific
-          // rebalancing scenario is not yet implemented for the immutable path.
-          RrbNode<E> mergedNode; // Declare mergedNode here
-          if ((node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) ||
-              (node1 is RrbInternalNode<E> &&
-                  node2 is RrbInternalNode<E> &&
-                  node1.height == node2.height)) {
-            // Nodes are compatible, proceed with merge-then-split
-            // 1. Merge node1 and node2 (similar to 'canMerge' logic)
-            if (node1 is RrbLeafNode<E>) {
-              // Already checked node2 is also Leaf
-              final combinedElements = [
-                ...node1.elements,
-                ...(node2 as RrbLeafNode<E>).elements,
-              ];
-              // Create potentially oversized leaf using default constructor
-              mergedNode = RrbLeafNode<E>(combinedElements);
-            } else {
-              // Both must be Internal nodes of same height
-              final combinedChildren = [
-                ...(node1 as RrbInternalNode<E>).children,
-                ...(node2 as RrbInternalNode<E>).children,
-              ];
-              // Create potentially oversized internal node (size table calculated later)
-              // Use default constructor
-              mergedNode = RrbInternalNode<E>(
-                node1.height, // Height is same
-                combinedCount,
-                combinedChildren,
-                null,
-              );
-            }
-          } else {
-            // Nodes are incompatible (different types or heights).
-            // This rebalancing case (cannot merge, cannot steal, incompatible nodes)
-            // requires more complex logic (e.g., adjusting heights) which is not
-            // implemented for the immutable path.
-            // TODO: Implement complex rebalancing for incompatible nodes (height adjustment?)
-            throw StateError(
-              'Cannot rebalance incompatible nodes (cannot merge/steal): ${node1.runtimeType} (height ${node1.height}) and ${node2.runtimeType} (height ${node2.height})',
-            );
-          }
+          // Cannot merge or steal. Use the general rebalancing plan.
+          // This handles cases where nodes are incompatible or both are too small.
 
-          // 2. Split the mergedNode into two new nodes
-          RrbNode<E> newNode1;
-          RrbNode<E> newNode2;
-          if (mergedNode is RrbLeafNode<E>) {
-            final splitPoint = (mergedNode.elements.length + 1) ~/ 2;
-            final leftElements = mergedNode.elements.sublist(0, splitPoint);
-            final rightElements = mergedNode.elements.sublist(splitPoint);
-            // Use default constructor
-            newNode1 = RrbLeafNode<E>(leftElements);
-            // Use default constructor
-            newNode2 = RrbLeafNode<E>(rightElements);
-          } else if (mergedNode is RrbInternalNode<E>) {
-            final splitPoint = (mergedNode.children.length + 1) ~/ 2;
-            final leftChildren = mergedNode.children.sublist(0, splitPoint);
-            final rightChildren = mergedNode.children.sublist(splitPoint);
-            // Recalculate counts and size tables for split nodes
-            final newNode1SizeTable = _computeSizeTableIfNeeded(leftChildren);
-            final newNode2SizeTable = _computeSizeTableIfNeeded(rightChildren);
-            // Ensure count is non-nullable with default 0
-            final newNode1Count =
-                newNode1SizeTable?.last ??
-                leftChildren.fold<int>(
-                  0,
-                  (sum, node) => sum + (node.count ?? 0),
-                );
-            // Ensure count is non-nullable with default 0
-            final newNode2Count = combinedCount - newNode1Count;
+          // 1. Define the nodes to rebalance (just the adjacent pair for now)
+          final nodesToRebalance = [node1, node2];
 
-            // Use default constructor
-            newNode1 = RrbInternalNode<E>(
-              mergedNode.height,
-              newNode1Count, // Use calculated count
-              leftChildren,
-              newNode1SizeTable,
-            );
-            // Use default constructor
-            newNode2 = RrbInternalNode<E>(
-              mergedNode.height,
-              newNode2Count,
-              rightChildren,
-              newNode2SizeTable,
-            );
-          } else {
-            // Should not happen
-            throw StateError('Merged node is of unexpected type during split');
-          }
+          // 2. Create the rebalancing plan based on the Search Step Invariant
+          final plan = _createRebalancePlan(nodesToRebalance);
 
-          // 3. Create new parent children list
-          final newParentChildren = List<RrbNode<E>>.of(children);
-          newParentChildren[slot] = newNode1;
-          newParentChildren[slot + 1] = newNode2;
+          // 3. Execute the plan to get the new list of balanced nodes
+          final balancedNodes = _executeRebalancePlan(nodesToRebalance, plan);
 
-          // 4. Recalculate parent's size table
+          // 4. Create the new parent children list by replacing the original pair
+          //    with the newly balanced nodes.
+          final newParentChildren =
+              List<RrbNode<E>>.of(children)
+                ..removeRange(slot, slot + 2) // Remove original node1 and node2
+                ..insertAll(slot, balancedNodes); // Insert the balanced nodes
+
+          // 5. Recalculate the parent's size table
           final newParentSizeTable = _computeSizeTableIfNeeded(
             newParentChildren,
           );
 
+          // 6. Return the new children and size table
           return (newParentChildren, newParentSizeTable);
         }
       }
     }
+  }
+
+  /// Generates a plan (list of target sizes) for distributing items/children
+  /// from a list of sibling nodes (`nodesToBalance`) to conform to the
+  /// Search Step Invariant (`S <= ceil(P / M) + E_MAX`).
+  ///
+  /// Based on `createConcatPlan` from reference implementations.
+  List<int> _createRebalancePlan(List<RrbNode<E>> nodesToBalance) {
+    if (nodesToBalance.isEmpty) {
+      return [];
+    }
+
+    // Initial plan is the current distribution of counts
+    // Make it growable as we might modify it in place before slicing
+    final plan = nodesToBalance
+        .map((node) => node.count)
+        .toList(growable: true);
+
+    // Count the total number of items/elements
+    final int s = plan.fold(0, (a, b) => a + b);
+
+    // Calculate the optimal number of slots necessary according to the invariant
+    // Using double division for ceil, then converting back to int
+    final int opt = (s / kBranchingFactor).ceil();
+
+    int i = 0;
+    int n = plan.length; // Current effective length of the plan
+
+    // Check if our invariant is met (Search Step Invariant: S <= ceil(P / M) + E_MAX)
+    // Keep reducing the number of slots (n) until the invariant holds.
+    while (n > opt + kEMax) {
+      // Skip slots that are already sufficiently full and don't need redistributing.
+      // Use integer division for kEMax / 2.
+      // This loop finds the first slot 'i' that needs redistribution.
+      while (i < n && plan[i] >= kBranchingFactor - (kEMax ~/ 2)) {
+        i++;
+      }
+
+      // If we scanned through all remaining slots and they are all sufficiently full,
+      // it implies an issue with the invariant logic or initial check.
+      // The loop condition `n > opt + kEMax` should prevent this if logic is sound.
+      if (i == n) {
+        throw StateError(
+          'Rebalance plan error: Invariant violated but no slots found needing redistribution.',
+        );
+      }
+
+      // Slot 'i' needs distributing over its subsequent siblings.
+      // 'r' tracks the number of items remaining to be distributed from slot 'i'.
+      int r = plan[i];
+      int currentSlot = i; // Start distributing into the slot *after* i
+
+      // Distribute items 'r' from plan[i] into subsequent slots (plan[i+1], plan[i+2], ...)
+      while (r > 0) {
+        currentSlot++; // Move to the next slot to potentially place items into
+
+        // Ensure we don't go out of bounds when accessing plan[currentSlot]
+        if (currentSlot >= n) {
+          // This indicates an issue: we have items left to distribute ('r' > 0)
+          // but no more slots available in the current plan length 'n'.
+          // This might happen if the invariant logic allows too many small nodes initially.
+          throw StateError(
+            'Rebalance plan error: Ran out of slots to distribute remaining items ($r).',
+          );
+        }
+
+        // Calculate how many items the target slot (plan[currentSlot]) can take
+        int spaceInTarget = kBranchingFactor - plan[currentSlot];
+        int itemsToMove = min(r, spaceInTarget);
+
+        // Add items to the target slot and update remaining 'r'
+        plan[currentSlot] += itemsToMove;
+        r -= itemsToMove;
+      }
+      // After the loop, r == 0, meaning all items from the original plan[i] have been distributed.
+
+      // The original slot plan[i] is now conceptually empty.
+      // Shift subsequent plan entries (from i+1 up to n-1) one position to the left
+      // to overwrite the now-empty slot i and fill the gap.
+      for (int j = i; j < n - 1; j++) {
+        plan[j] = plan[j + 1];
+      }
+
+      // Decrease the effective plan length because we eliminated one slot (slot 'i')
+      n--;
+
+      // Reset 'i' to re-evaluate from the start of the modified plan segment?
+      // The reference code uses i--. This seems intended to potentially re-check
+      // the slot at the *new* index 'i' (which now contains what was previously at i+1)
+      // or the slot before it if i > 0. Let's stick to the reference logic.
+      // If i was 0, it remains 0. If i > 0, it moves back one slot.
+      if (i > 0) {
+        i--;
+      }
+      // The outer loop `while (n > opt + kEMax)` will continue if the invariant
+      // is still not met with the reduced number of slots 'n'.
+    } // End while (n > opt + kEMax)
+
+    // Return the final plan containing n entries. Use sublist to get the correct length.
+    // The underlying list `plan` might be longer if it wasn't growable:false initially.
+    return plan.sublist(0, n);
+  }
+
+  /// Executes a rebalancing plan to create a new list of balanced nodes.
+  ///
+  /// Takes a list of original sibling nodes (`originalNodes`) and a `plan`
+  /// (list of target sizes from `_createRebalancePlan`) and returns a new
+  /// list of nodes containing the same elements/children redistributed according
+  /// to the plan.
+  ///
+  /// Based on `executeConcatPlan` from reference implementations.
+  /// Handles both Leaf and Internal node redistribution.
+  List<RrbNode<E>> _executeRebalancePlan(
+    List<RrbNode<E>> originalNodes,
+    List<int> plan,
+  ) {
+    final List<RrbNode<E>> newNodes =
+        []; // The resulting list of balanced nodes
+    int originalNodeIndex = 0; // Index into the originalNodes list
+    int offsetInOriginalNode =
+        0; // Offset within the current original node's items/children
+
+    // Iterate through the target sizes defined in the plan
+    for (final targetSize in plan) {
+      // Get the current node from the original list we are processing
+      // Ensure we don't read past the end of originalNodes
+      if (originalNodeIndex >= originalNodes.length) {
+        throw StateError(
+          'Rebalance plan execution error: Ran out of original nodes while processing plan.',
+        );
+      }
+      final currentOriginalNode = originalNodes[originalNodeIndex];
+
+      // Optimization: If the current original node matches the target size exactly
+      // and we are at the beginning of that node (offset is 0), we can reuse it directly.
+      if (offsetInOriginalNode == 0 &&
+          currentOriginalNode.count == targetSize) {
+        newNodes.add(currentOriginalNode);
+        originalNodeIndex++; // Move to the next original node
+        continue; // Move to the next target size in the plan
+      }
+
+      // If optimization doesn't apply, we need to construct a new node of the target size.
+      // This list will accumulate the items (for leaves) or children (for internal nodes).
+      final List<dynamic> newNodeItemsOrChildren = [];
+
+      // Keep taking items/children from the original nodes until the new node reaches the target size.
+      while (newNodeItemsOrChildren.length < targetSize) {
+        // Ensure we don't read past the end of originalNodes in the inner loop
+        if (originalNodeIndex >= originalNodes.length) {
+          throw StateError(
+            'Rebalance plan execution error: Ran out of original nodes while filling target size $targetSize.',
+          );
+        }
+        // Get the node we are currently taking items/children from.
+        // It might have changed if originalNodeIndex was incremented in the previous iteration.
+        final nodeToTakeFrom = originalNodes[originalNodeIndex];
+
+        final int required = targetSize - newNodeItemsOrChildren.length;
+        // Ensure count is non-null before calculation
+        final int nodeCount = nodeToTakeFrom.count ?? 0;
+        final int available = nodeCount - offsetInOriginalNode;
+        final int countToTake = min(required, available);
+
+        // Check for invalid countToTake which might indicate offset issues
+        if (countToTake < 0) {
+          throw StateError(
+            'Rebalance plan execution error: Negative countToTake ($countToTake). Offset: $offsetInOriginalNode, Available: $available',
+          );
+        }
+        if (countToTake == 0 && required > 0) {
+          // This might happen if a node has count 0 but we still need items.
+          // Move to the next node.
+          offsetInOriginalNode = 0;
+          originalNodeIndex++;
+          continue;
+        }
+
+        // Add the required items/children to the accumulator list.
+        if (nodeToTakeFrom is RrbLeafNode<E>) {
+          // Ensure sublist bounds are valid
+          final endSublist = offsetInOriginalNode + countToTake;
+          if (offsetInOriginalNode < 0 ||
+              endSublist > nodeToTakeFrom.elements.length) {
+            throw StateError(
+              'Rebalance plan execution error: Invalid sublist range for leaf node. Offset: $offsetInOriginalNode, Count: $countToTake, Length: ${nodeToTakeFrom.elements.length}',
+            );
+          }
+          newNodeItemsOrChildren.addAll(
+            nodeToTakeFrom.elements.sublist(offsetInOriginalNode, endSublist),
+          );
+        } else if (nodeToTakeFrom is RrbInternalNode<E>) {
+          // Ensure sublist bounds are valid
+          final endSublist = offsetInOriginalNode + countToTake;
+          if (offsetInOriginalNode < 0 ||
+              endSublist > nodeToTakeFrom.children.length) {
+            throw StateError(
+              'Rebalance plan execution error: Invalid sublist range for internal node. Offset: $offsetInOriginalNode, Count: $countToTake, Length: ${nodeToTakeFrom.children.length}',
+            );
+          }
+          newNodeItemsOrChildren.addAll(
+            nodeToTakeFrom.children.sublist(offsetInOriginalNode, endSublist),
+          );
+        } else {
+          // Should not happen
+          throw StateError('Unexpected node type during plan execution');
+        }
+
+        // Update the offset and potentially move to the next original node.
+        if (countToTake == available) {
+          // Consumed the rest of the current original node.
+          offsetInOriginalNode = 0; // Reset offset for the next node.
+          originalNodeIndex++; // Move to the next original node.
+        } else {
+          // Partially consumed the current original node.
+          offsetInOriginalNode += countToTake; // Advance the offset.
+        }
+      } // End while (accumulating items/children for the new node)
+
+      // Create the new node (Leaf or Internal) using the accumulated items/children.
+      // The height of the new node is one less than the parent's height (this.height).
+      final int newNodeHeight = this.height - 1;
+      if (newNodeHeight < 0) {
+        throw StateError(
+          'Rebalance plan execution error: Calculated node height is negative.',
+        );
+      }
+
+      if (newNodeHeight == 0) {
+        // Create a new Leaf node
+        // Ensure items are of type E before creating the list
+        final elements = List<E>.from(newNodeItemsOrChildren.whereType<E>());
+        if (elements.length != newNodeItemsOrChildren.length) {
+          throw StateError(
+            'Rebalance plan execution error: Type mismatch when creating leaf node.',
+          );
+        }
+        newNodes.add(RrbLeafNode<E>(elements));
+      } else {
+        // Create a new Internal node
+        // Ensure items are of type RrbNode<E> before creating the list
+        final children = List<RrbNode<E>>.from(
+          newNodeItemsOrChildren.whereType<RrbNode<E>>(),
+        );
+        if (children.length != newNodeItemsOrChildren.length) {
+          throw StateError(
+            'Rebalance plan execution error: Type mismatch when creating internal node.',
+          );
+        }
+        // Calculate size table and count *only* when creating an internal node
+        final newSizeTable = _computeSizeTableIfNeeded(children);
+        // Ensure count is non-null before fold
+        final newCount = children.fold<int>(
+          0,
+          (sum, node) => sum + (node.count ?? 0),
+        );
+        newNodes.add(
+          RrbInternalNode<E>(newNodeHeight, newCount, children, newSizeTable),
+        );
+      }
+    } // End for (iterating through plan)
+
+    // Final check: ensure all original items/children have been consumed
+    if (originalNodeIndex < originalNodes.length &&
+        offsetInOriginalNode < (originalNodes[originalNodeIndex].count ?? 0)) {
+      throw StateError(
+        'Rebalance plan execution error: Not all original items/children were consumed by the plan.',
+      );
+    }
+
+    return newNodes;
+  }
+
+  /// Executes a rebalancing plan transiently, mutating nodes in place.
+  ///
+  /// Takes a list of original sibling nodes (`originalNodes`) owned by `owner`,
+  /// and a `plan` (list of target sizes from `_createRebalancePlan`). It modifies
+  /// the `originalNodes` list and the nodes within it to conform to the plan.
+  /// Returns the list of nodes that now represent the balanced segment (this might
+  /// be a sublist or modified version of `originalNodes`).
+  ///
+  /// **Important:** This method assumes `originalNodes` contains nodes that are
+  /// already mutable and owned by `owner` where necessary.
+  List<RrbNode<E>> _executeTransientRebalancePlan(
+    List<RrbNode<E>> originalNodes, // Should contain mutable nodes
+    List<int> plan,
+    TransientOwner owner,
+  ) {
+    // This implementation aims to modify originalNodes *in place* where possible.
+    // It assumes the caller handles inserting/removing the final balanced nodes
+    // into the parent's children list.
+
+    final List<RrbNode<E>> finalBalancedNodes = [];
+    int sourceNodeIndex =
+        0; // Index into the originalNodes list (source of items)
+    int offsetInSourceNode = 0; // Offset within the current source node
+    final int originalNodeCount = originalNodes.length;
+
+    for (
+      int targetNodeIndex = 0;
+      targetNodeIndex < plan.length;
+      targetNodeIndex++
+    ) {
+      final targetSize = plan[targetNodeIndex];
+
+      // Get or create a mutable node to fill
+      RrbNode<E> nodeToFill;
+      if (targetNodeIndex < originalNodeCount) {
+        // Try to reuse an existing node from the original list
+        nodeToFill = originalNodes[targetNodeIndex];
+        if (nodeToFill is RrbInternalNode<E>) {
+          nodeToFill = nodeToFill.ensureMutable(owner);
+          nodeToFill.children.clear(); // Clear existing content
+          nodeToFill.sizeTable = null;
+          nodeToFill._transientSetCount(0, owner);
+        } else if (nodeToFill is RrbLeafNode<E>) {
+          nodeToFill = nodeToFill.ensureMutable(owner);
+          nodeToFill.elements.clear(); // Clear existing content
+        }
+      } else {
+        // Need a new node
+        final int newNodeHeight = this.height - 1;
+        if (newNodeHeight == 0) {
+          nodeToFill = RrbLeafNode<E>._internal([], owner);
+        } else {
+          nodeToFill = RrbInternalNode<E>(newNodeHeight, 0, [], null, owner);
+        }
+      }
+
+      // Fill the nodeToFill with targetSize items/children
+      int currentSize = 0;
+      while (currentSize < targetSize) {
+        if (sourceNodeIndex >= originalNodeCount) {
+          throw StateError(
+            'Transient rebalance error: Ran out of source nodes while filling target size.',
+          );
+        }
+        final nodeToTakeFrom = originalNodes[sourceNodeIndex];
+        final int nodeCount = nodeToTakeFrom.count ?? 0;
+        final int available = nodeCount - offsetInSourceNode;
+        final int required = targetSize - currentSize;
+        final int countToTake = min(required, available);
+
+        if (countToTake < 0) {
+          throw StateError('Transient rebalance error: Negative countToTake.');
+        }
+        if (countToTake == 0 && required > 0) {
+          offsetInSourceNode = 0;
+          sourceNodeIndex++;
+          continue;
+        }
+
+        // Add items/children to nodeToFill (which is mutable)
+        if (nodeToFill is RrbLeafNode<E> && nodeToTakeFrom is RrbLeafNode<E>) {
+          final sublist = nodeToTakeFrom.elements.sublist(
+            offsetInSourceNode,
+            offsetInSourceNode + countToTake,
+          );
+          nodeToFill.elements.addAll(sublist);
+          currentSize += countToTake;
+        } else if (nodeToFill is RrbInternalNode<E> &&
+            nodeToTakeFrom is RrbInternalNode<E>) {
+          final sublist = nodeToTakeFrom.children.sublist(
+            offsetInSourceNode,
+            offsetInSourceNode + countToTake,
+          );
+          nodeToFill.children.addAll(sublist);
+          currentSize += countToTake; // Count children added
+        } else {
+          throw StateError(
+            'Transient rebalance error: Type mismatch between nodeToFill and nodeToTakeFrom.',
+          );
+        }
+
+        // Update source offset/index
+        if (countToTake == available) {
+          offsetInSourceNode = 0;
+          sourceNodeIndex++;
+        } else {
+          offsetInSourceNode += countToTake;
+        }
+      } // End while filling nodeToFill
+
+      // Finalize the filled node (update count and size table if internal)
+      if (nodeToFill is RrbInternalNode<E>) {
+        final finalCount = nodeToFill.children.fold<int>(
+          0,
+          (sum, node) => sum + (node.count ?? 0),
+        );
+        nodeToFill._transientSetCount(finalCount, owner);
+        nodeToFill.sizeTable = _computeSizeTableIfNeeded(nodeToFill.children);
+      }
+      // Leaf count updates automatically
+
+      finalBalancedNodes.add(nodeToFill);
+    } // End for loop over plan
+
+    // Optional final check (can be removed later)
+    if (sourceNodeIndex < originalNodeCount &&
+        offsetInSourceNode < (originalNodes[sourceNodeIndex].count ?? 0)) {
+      throw StateError(
+        'Transient rebalance error: Not all source items consumed.',
+      );
+    }
+
+    return finalBalancedNodes;
   }
 } // End of RrbInternalNode
 
