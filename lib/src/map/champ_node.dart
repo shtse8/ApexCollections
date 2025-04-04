@@ -304,6 +304,7 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
       hash,
       key,
       value,
+      null, // Pass null owner for immutable merge
     );
     return (node: newNode, didAdd: true);
   }
@@ -347,6 +348,7 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
         hash,
         key,
         newValue,
+        null, // Pass null owner for immutable merge
       );
       return (node: newNode, sizeChanged: true);
     }
@@ -681,13 +683,17 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   /// Factory constructor to create an internal node from two initial child nodes
   /// that have different hash fragments at the current [shift] level.
   /// Used when merging data entries or splitting collision nodes.
+  /// Factory constructor to create an internal node from two initial child nodes
+  /// that have different hash fragments at the current [shift] level.
+  /// Used when merging data entries or splitting collision nodes.
+  /// Creates a transient node if an [owner] is provided.
   factory ChampInternalNode.fromNodes(
     int shift,
     int hash1,
     ChampNode<K, V> node1,
     int hash2,
     ChampNode<K, V> node2,
-    TransientOwner? owner, // Pass owner for potential transient creation
+    TransientOwner? owner,
   ) {
     final frag1 = indexFragment(shift, hash1);
     final frag2 = indexFragment(shift, hash2);
@@ -711,7 +717,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       0, // No data entries initially
       newNodeMap,
       newContent,
-      owner, // Pass owner to constructor
+      owner, // Pass owner to potentially create a transient node
     );
   }
 
@@ -1000,6 +1006,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         hash,
         key,
         value,
+        owner, // Pass owner for potentially transient merge
       );
       _replaceDataWithNodeInPlace(
         dataIndex,
@@ -1090,6 +1097,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         hash,
         key,
         value,
+        null, // Pass null owner for immutable merge
       );
 
       // Create new node replacing data with sub-node (Explicit list manipulation logic)
@@ -1460,6 +1468,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           hash,
           key,
           newValue,
+          owner, // Pass owner for potentially transient merge
         );
         // Replace data entry with the new sub-node in place
         _replaceDataWithNodeInPlace(dataIndex, subNode, bitpos);
@@ -1571,6 +1580,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           hash,
           key,
           newValue,
+          null, // Pass null owner for immutable merge
         );
         // Create new node replacing data with sub-node
         return (
@@ -1913,6 +1923,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 /// - [hash2], [key2], [value2]: Details of the second entry.
 ///
 /// Returns an immutable [ChampInternalNode] or [ChampCollisionNode].
+/// - [owner]: Optional owner for creating transient nodes during the merge.
 ChampNode<K, V> mergeDataEntries<K, V>(
   int shift,
   int hash1,
@@ -1921,15 +1932,16 @@ ChampNode<K, V> mergeDataEntries<K, V>(
   int hash2,
   K key2,
   V value2,
+  TransientOwner? owner, // Added owner parameter
 ) {
   assert(key1 != key2); // Keys must be different
 
   if (shift >= kMaxDepth * kBitPartitionSize) {
     // Max depth reached, create a collision node
     return ChampCollisionNode<K, V>(
-      hash1, // Use one of the hashes (they should be equal up to this depth)
+      hash1, // Use one of the hashes
       [MapEntry(key1, value1), MapEntry(key2, value2)],
-      null, // Immutable result
+      owner, // Pass owner for potential transient collision node
     );
   }
 
@@ -1946,6 +1958,7 @@ ChampNode<K, V> mergeDataEntries<K, V>(
       hash2,
       key2,
       value2,
+      owner, // Pass owner down recursively
     );
     // Create an internal node with the single sub-node
     final bitpos = 1 << frag1;
@@ -1953,7 +1966,7 @@ ChampNode<K, V> mergeDataEntries<K, V>(
       0, // No data map
       bitpos, // Node map with single bit set
       [subNode],
-      null, // Immutable result
+      owner, // Pass owner for potential transient internal node
     );
   } else {
     // Fragments differ, create an internal node with two data entries
@@ -1972,7 +1985,7 @@ ChampNode<K, V> mergeDataEntries<K, V>(
       newDataMap,
       0, // No node map
       newContent,
-      null, // Immutable result
+      owner, // Pass owner for potential transient internal node
     );
   }
 }

@@ -69,81 +69,56 @@ class ApexListImpl<E> extends ApexList<E> {
       return emptyInstance<E>();
     }
 
-    // --- Use Transient Building ---
+    // --- Use Recursive Concatenation Building ---
     final owner = rrb.TransientOwner();
 
-    // --- Build Leaf Nodes ---
-    List<rrb.RrbNode<E>> currentLevelNodes = [];
-    for (int i = 0; i < totalLength; i += rrb.kBranchingFactor) {
-      // Use constant from rrb
-      final end =
-          (i + rrb.kBranchingFactor < totalLength)
-              ? i + rrb.kBranchingFactor
-              : totalLength;
-      // Use the new fromRange factory constructor
-      currentLevelNodes.add(
-        rrb.RrbLeafNode<E>.fromRange(sourceList, i, end, owner),
-      );
-    }
+    // Build the tree recursively using the helper
+    final rootNode = _buildTreeFromRange<E>(sourceList, 0, totalLength, owner);
 
-    // --- Build Internal Nodes ---
-    int currentHeight = 0;
-    while (currentLevelNodes.length > 1) {
-      currentHeight++;
-      List<rrb.RrbNode<E>> parentLevelNodes = [];
-      for (int i = 0; i < currentLevelNodes.length; i += rrb.kBranchingFactor) {
-        // Use constant from rrb
-        final end =
-            (i + rrb.kBranchingFactor < currentLevelNodes.length)
-                ? i + rrb.kBranchingFactor
-                : currentLevelNodes.length;
-        // No need for childrenChunk sublist anymore
-        // Pass currentLevelNodes and the range [i, end) directly
-
-        // Calculate count and size table for the new parent node
-        int parentCount = 0;
-        // *** UPDATED CALL SITE ***
-        // Calculate size table based on the range of children in currentLevelNodes
-        // Pass the full list and range to the updated utility function
-        List<int>? parentSizeTable = treeUtils.computeSizeTableIfNeeded<E>(
-          currentLevelNodes, // Pass the full list
-          i, // Start index
-          end, // End index
-          currentHeight,
-        );
-        if (parentSizeTable != null) {
-          parentCount = parentSizeTable.last;
-        } else {
-          // If strict, calculate count based on the children in the range [i, end)
-          int fullChildCount = 1 << (currentHeight * rrb.kLog2BranchingFactor);
-          int numChildrenInRange = end - i;
-          parentCount =
-              (numChildrenInRange - 1) * fullChildCount +
-              currentLevelNodes[end - 1]
-                  .count; // Count of the last child in the range
-        }
-
-        // Use the new fromRange constructor for RrbInternalNode
-        parentLevelNodes.add(
-          rrb.RrbInternalNode<E>.fromRange(
-            currentHeight,
-            parentCount,
-            currentLevelNodes, // Pass the full list
-            i, // Start index
-            end, // End index
-            parentSizeTable,
-            owner, // Pass owner to create transient internal nodes
-          ),
-        );
-      }
-      currentLevelNodes = parentLevelNodes;
-    }
-
-    // The single remaining node is the root (potentially transient)
-    final rootNode = currentLevelNodes[0];
-    // Freeze the entire transient structure before returning
+    // Freeze the potentially transient tree structure built by the helper
     final frozenRoot = rootNode.freeze(owner);
     return ApexListImpl._(frozenRoot, totalLength);
+  }
+
+  /// Recursive helper to build an RRB-Tree (potentially transient) from a range of elements.
+  /// Uses a divide-and-conquer concatenation strategy.
+  static rrb.RrbNode<E> _buildTreeFromRange<E>(
+    List<E> sourceList,
+    int start,
+    int end,
+    rrb.TransientOwner owner,
+  ) {
+    final rangeLength = end - start;
+
+    // Base Case 1: Empty range
+    if (rangeLength <= 0) {
+      // Return the non-typed empty instance, it will be cast later if needed.
+      // Or handle type casting carefully if returning ApexListImpl.emptyInstance<E>()._root
+      return rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>;
+    }
+
+    // Base Case 2: Small range fits in a single leaf node
+    if (rangeLength <= rrb.kBranchingFactor) {
+      return rrb.RrbLeafNode<E>.fromRange(sourceList, start, end, owner);
+    }
+
+    // Recursive Step: Split range, build subtrees, concatenate
+    final mid = start + (rangeLength ~/ 2); // Find midpoint
+
+    // Recursively build left and right subtrees (passing the owner)
+    final leftNode = _buildTreeFromRange<E>(sourceList, start, mid, owner);
+    final rightNode = _buildTreeFromRange<E>(sourceList, mid, end, owner);
+
+    // Concatenate the resulting nodes.
+    // Note: concatenateTrees currently returns an immutable node.
+    // We rely on the final freeze operation outside this recursive call.
+    // A fully transient concatenation might be more optimal but adds complexity.
+    return treeUtils.concatenateTrees<E>(
+      leftNode,
+      mid - start, // Length of left part
+      rightNode,
+      end - mid, // Length of right part
+    );
   }
 
   // *** REMOVED _computeSizeTableIfNeeded ***
@@ -225,46 +200,21 @@ class ApexListImpl<E> extends ApexList<E> {
       return ApexListImpl<E>.fromIterable(elementsToAdd);
     }
 
-    // --- Use Transient Add ---
-    final owner = rrb.TransientOwner();
-    // Get a mutable version of the current root node
-    rrb.RrbNode<E> mutableRoot;
-    if (_root is rrb.RrbInternalNode<E>) {
-      mutableRoot = (_root as rrb.RrbInternalNode<E>).ensureMutable(owner);
-    } else if (_root is rrb.RrbLeafNode<E>) {
-      mutableRoot = (_root as rrb.RrbLeafNode<E>).ensureMutable(owner);
-    } else {
-      // Should not happen if list is not empty
-      mutableRoot = rrb.RrbLeafNode.emptyInstance as rrb.RrbNode<E>;
-    }
+    // --- New Strategy: Create list from iterable and concatenate ---
+    // Create a new ApexList from the elements to add using the efficient factory.
+    final listToAdd = ApexListImpl<E>.fromIterable(elementsToAdd);
 
-    int additions = 0;
-    for (final element in elementsToAdd) {
-      // Pass owner to mutate the root node structure via transient add
-      // Note: RrbNode.add itself handles splits and returns the new root
-      mutableRoot = mutableRoot.add(
-        element,
-      ); // Owner is implicit on mutableRoot
-      additions++;
-    }
+    // Concatenate the current list's tree with the new list's tree.
+    final newRoot = treeUtils.concatenateTrees<E>(
+      _root,
+      _length,
+      listToAdd._root, // Access internal root of the new list
+      listToAdd.length,
+    );
+    final newLength = _length + listToAdd.length;
 
-    // If no additions occurred (e.g., iterable was empty after conversion, though checked earlier)
-    // or if the root reference didn't change (unlikely with additions), handle potential copy.
-    if (additions == 0) {
-      if (!identical(mutableRoot, _root)) {
-        // ensureMutable created a copy, but nothing was added. Freeze and return it.
-        final frozenRoot = mutableRoot.freeze(owner);
-        return ApexListImpl._(frozenRoot, _length);
-      }
-      return this; // No changes needed
-    }
-
-    // Freeze the final potentially mutable root node
-    final frozenRoot = mutableRoot.freeze(owner);
-    final newLength = _length + additions; // Use actual additions count
-
-    // Return new instance with the frozen root and updated count
-    return ApexListImpl._(frozenRoot, newLength);
+    // Return new instance with the concatenated root and updated count.
+    return ApexListImpl<E>._(newRoot, newLength);
   }
 
   @override

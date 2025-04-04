@@ -158,8 +158,11 @@ class RrbInternalNode<E> extends RrbNode<E> {
     sizeTable, // Size table corresponds to the children *within the range*
     TransientOwner? owner,
   ]) {
-    final childrenList = List<RrbNode<E>>.of(
-      childrenInput.getRange(start, end), // Copy the relevant range
+    final rangeLength = end - start; // Calculate range length
+    final childrenList = List<RrbNode<E>>.generate(
+      // Use generate
+      rangeLength,
+      (i) => childrenInput[start + i], // Access directly by index
       growable: owner != null, // Growable only if transient
     );
     // Use the default constructor with the prepared children list
@@ -194,27 +197,44 @@ class RrbInternalNode<E> extends RrbNode<E> {
   E get(int index) {
     assert(index >= 0 && index < count);
 
-    // Determine the target child slot and index within the child.
-    int slot = 0;
-    int countBeforeSlot = 0;
+    int slot;
     int indexInChild;
 
     if (isRelaxed) {
-      // Use size table if available
+      // --- Relaxed Path: Use Binary Search on sizeTable ---
       final sizes = sizeTable!;
-      while (slot < sizes.length && sizes[slot] <= index) {
-        slot++;
+      // Binary search to find the first slot where sizes[slot] > index
+      int low = 0;
+      int high = sizes.length - 1;
+      slot =
+          sizes
+              .length; // Default to last slot if index is >= last cumulative count
+
+      while (low <= high) {
+        final mid = low + ((high - low) >> 1); // Efficient midpoint calculation
+        if (sizes[mid] > index) {
+          slot = mid; // Potential slot found, try searching lower half
+          high = mid - 1;
+        } else {
+          low = mid + 1; // Index is in the upper half
+        }
       }
-      countBeforeSlot = (slot == 0) ? 0 : sizes[slot - 1];
+
+      final countBeforeSlot = (slot == 0) ? 0 : sizes[slot - 1];
+      indexInChild = index - countBeforeSlot;
     } else {
+      // --- Strict Path: Reverted to Linear Scan ---
       // Iterate through children summing counts for strict nodes
+      // Direct calculation was causing errors, likely due to imperfect node fullness.
+      int countBeforeSlot = 0;
+      slot = 0; // Reset slot for linear scan
       while (slot < children.length - 1 &&
           countBeforeSlot + children[slot].count <= index) {
         countBeforeSlot += children[slot].count;
         slot++;
       }
+      indexInChild = index - countBeforeSlot;
     }
-    indexInChild = index - countBeforeSlot;
 
     assert(
       slot >= 0 && slot < children.length,
@@ -223,7 +243,7 @@ class RrbInternalNode<E> extends RrbNode<E> {
     final child = children[slot];
     assert(
       indexInChild >= 0 && indexInChild < child.count,
-      'Get: Invalid indexInChild ($indexInChild). index: $index, slot: $slot, childCount: ${child.count}',
+      'Get: Invalid indexInChild ($indexInChild). index: $index, slot: $slot, childCount: ${child.count}, height: $height, isRelaxed: $isRelaxed',
     );
     return child.get(indexInChild);
   }
@@ -1060,9 +1080,6 @@ class RrbInternalNode<E> extends RrbNode<E> {
           mutableChildren[slot + 1] = mutableNode2;
         } else {
           // Cannot merge or steal: Use plan-based rebalancing.
-          // TODO: Optimize transient plan execution to mutate/reuse nodes instead of creating new ones.
-          // For now, we use the immutable execution logic which creates new nodes,
-          // ensuring correctness but sacrificing potential transient performance gain here.
 
           // 1. Define the nodes to rebalance (use the original node references)
           final nodesToRebalance = [node1, node2];
@@ -1070,10 +1087,10 @@ class RrbInternalNode<E> extends RrbNode<E> {
           // 2. Create the rebalancing plan
           final plan = _createRebalancePlan(nodesToRebalance);
 
-          // 3. Execute the plan to get the new list of balanced nodes
-          // NOTE: This now attempts to mutate nodes in place via the transient plan executor.
+          // 3. Execute the plan transiently to get the list of balanced nodes
+          //    (mutating original nodes or creating new mutable ones as needed).
           final balancedNodes = _executeTransientRebalancePlan(
-            nodesToRebalance,
+            nodesToRebalance, // Pass the original nodes (potentially already mutable)
             plan,
             owner,
           );
@@ -1739,6 +1756,17 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
     return finalBalancedNodes;
   }
+
+  /// Executes a rebalancing plan transiently, mutating nodes in place.
+  ///
+  /// Takes a list of original sibling nodes (`originalNodes`) owned by `owner`,
+  /// and a `plan` (list of target sizes from `_createRebalancePlan`). It modifies
+  /// the `originalNodes` list and the nodes within it to conform to the plan.
+  /// Returns the list of nodes that now represent the balanced segment (this might
+  /// be a sublist or modified version of `originalNodes`).
+  ///
+  /// **Important:** This method assumes `originalNodes` contains nodes that are
+  /// already mutable and owned by `owner` where necessary.
 } // End of RrbInternalNode
 
 /// Represents a leaf node in the RRB-Tree.

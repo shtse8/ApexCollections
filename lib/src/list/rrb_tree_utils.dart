@@ -56,9 +56,9 @@ List<int>? computeSizeTableIfNeeded<E>(
     cumulativeCount += child.count;
     calculatedSizeTable[i] = cumulativeCount;
     // Only check fullness if heights are consistent so far
-    // The last child is allowed to be non-full.
+    // and not the last child in the range
     if (!needsTable &&
-        i < numChildren - 1 && // Check against the last child *in the range*
+        i < numChildren - 1 &&
         child.count != expectedChildNodeSize) {
       needsTable = true;
     }
