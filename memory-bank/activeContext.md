@@ -1,21 +1,24 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-03 ~17:43 UTC+1)
+## Current Status (Timestamp: 2025-04-03 ~21:38 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
 -   **Phase 3: Implementation & Unit Testing COMPLETE.**
 -   **Phase 4: Performance Optimization & Benchmarking IN PROGRESS.**
-    -   Benchmarks updated to include conversion operations (`toList`, `toMap`, `fromIterable`, `fromMap`).
     -   **ApexMap:**
-        -   Shows **excellent** performance for bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), and conversion to native (`toMap`).
+        -   Bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), `toMap` remain **excellent**.
         -   Single `add`/`lookup` performance is acceptable but slower than competitors.
-        -   **CRITICAL ISSUE:** `ApexMap.fromMap` performance is **extremely poor** and needs immediate investigation.
+        -   **CRITICAL ISSUE:** `ApexMap.fromMap` performance remains **extremely poor** (`~13000-15000 us`). Bulk loading attempts failed/reverted. Needs dedicated investigation/debugging.
     -   **ApexList:**
-        -   Shows good performance for single `add` (vs FIC) and `removeAt` (vs both). `addAll` is also good.
-        -   Iteration (`iterateSum`), `removeWhere`, `sublist`, `concat(+)` performance needs improvement.
-        -   Conversion performance (`toList`, `fromIterable`) is significantly slower than FIC and needs optimization.
-    -   **KNOWN ISSUE (ApexList - RRB Tree):** The `_rebalanceOrMerge` logic in `RrbInternalNode` is incomplete for the "Cannot steal" edge case. (Status unchanged)
+        -   `add`, `removeAt`, `addAll` performance remains good.
+        -   `concat(+)` performance is now **excellent** (`~6 us`) after implementing O(log N) algorithm.
+        -   `removeWhere` performance is acceptable (`~2500 us`) after reverting transient attempt. Faster than Native List, slower than FIC.
+        -   `sublist` performance is poor (`~2400 us`). O(log N) attempt reverted. Needs improvement.
+        -   `toList` performance (`~960 us`) improved by restoring recursive helper, but still slower than FIC (`~680 us`).
+        -   `fromIterable` performance (`~2000 us`) is significantly slower than FIC (`~790 us`). Needs optimization (bulk loading?).
+        -   Iteration (`iterateSum`) performance (`~260-300 us`) is acceptable, slightly faster than FIC.
+    -   **KNOWN ISSUE (ApexList - RRB Tree):** The `_rebalanceOrMerge` logic in `RrbInternalNode` is incomplete for the "Cannot steal" edge case. (Status unchanged, deemed lower priority for now).
 
 ## Current Focus
 
@@ -23,16 +26,13 @@
 
 ## Next Immediate Steps
 
-1.  **FIX `ApexMap.fromMap` Performance:** Research and implement a **CHAMP bulk loading algorithm** (e.g., sort + layered build) to replace the current iterative transient `add`. **(Highest Priority)**
-2.  **Implement Efficient `ApexList.concat`:** Implement the **O(log N) RRB-Tree concatenation algorithm** based on tree structure manipulation.
-3.  **Implement Efficient `ApexList.sublist`:** Implement the **O(log N) RRB-Tree slicing algorithm** based on tree structure manipulation.
-4.  **Optimize `ApexList.removeWhere`:** Ensure implementation uses an efficient approach like **transient builder filtering**.
-5.  **Optimize `ApexList` Conversions:**
-    *   Investigate **RRB-Tree bulk loading** for `fromIterable`.
-    *   Optimize `_RrbTreeIterator` or implement direct node traversal for `toList`.
-6.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case.
-7.  **Re-run Benchmarks:** After fixes and optimizations.
-8.  **Begin Documentation:** Start writing basic API documentation.
+1.  **FIX `ApexMap.fromMap` Performance:** Reverted failed bulk loading attempts. Needs dedicated investigation and debugging of the bulk loading algorithm. **(Highest Priority)**
+2.  **Optimize `ApexList.sublist`:** Reverted failed O(log N) attempt. Needs investigation/re-implementation of efficient slicing.
+3.  **Optimize `ApexList.fromIterable`:** Investigate **RRB-Tree bulk loading** or other optimizations.
+4.  **Optimize `ApexList.toList`:** Recursive helper is better than `List.of`, but still slower than FIC. Further investigation needed (iterator vs direct traversal).
+5.  **(Lower Priority) Refine RRB-Tree `_rebalanceOrMerge`:** Implement proper handling for the "Cannot steal" edge case.
+6.  **(Lower Priority) Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations if needed after major issues resolved.
+7.  **Begin Documentation:** Start writing basic API documentation.
 
 ## Open Questions / Decisions
 

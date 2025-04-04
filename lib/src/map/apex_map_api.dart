@@ -36,6 +36,10 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   ///
   /// The key-value pairs from the source map are copied into the new `ApexMap`.
   ///
+  /// This factory uses an efficient bulk-loading algorithm (O(N log N) due to
+  /// sorting) for improved performance when creating maps from large sources,
+  /// compared to iteratively adding entries.
+  ///
   /// ```dart
   /// final sourceMap = {'a': 1, 'b': 2};
   /// final apexMap = ApexMap.from(sourceMap);
