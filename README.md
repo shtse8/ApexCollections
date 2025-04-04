@@ -31,6 +31,20 @@ This library is currently under **active development**.
     *   Performance benchmarking and optimization.
     *   Improving documentation.
 
+## Performance (Baseline Comparison)
+
+Initial benchmarks (comparing native Dart collections and `fast_immutable_collections` (FIC) with 10,000 elements) provide a baseline for `ApexCollections` goals.
+
+**Key Observations (vs. FIC):**
+
+*   **Lookups (`[]`):** Both native and FIC are very fast. `ApexCollections` aims to match this.
+*   **Adds:** Native mutable adds are fastest. FIC adds involve overhead. `ApexCollections` aims for competitive immutable add performance.
+*   **Removals:** Performance varies. `ApexCollections` aims for efficient immutable removals.
+*   **Iteration:** Native iteration is generally faster. `ApexCollections` aims for efficient iteration.
+
+*(Note: These are baseline results. Detailed benchmarks comparing ApexCollections against native and FIC are in progress and will be added once the library stabilizes. See the `benchmark/` directory for testing code.)*
+
+
 ## Installation
 
 This package is not yet published on `pub.dev`. Once published, add it to your `pubspec.yaml`:
