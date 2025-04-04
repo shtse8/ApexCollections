@@ -91,6 +91,8 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
         final dataMap = node.dataMap;
         final nodeMap = node.nodeMap;
         final content = node.content;
+        final dataSlots =
+            champ.bitCount(dataMap) * 2; // Calculate data offset once
 
         bool processedEntryOrNode =
             false; // Flag to check if we processed something in the loop
@@ -119,8 +121,7 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
               nodeMap & (currentBitpos - 1),
             );
             final nodeIndex =
-                (champ.bitCount(dataMap) * 2) +
-                nodeLocalIndex; // Corrected index calculation
+                dataSlots + nodeLocalIndex; // Use pre-calculated dataSlots
 
             // Check bounds before accessing content
             if (nodeIndex < 0 || nodeIndex >= content.length) {

@@ -1062,6 +1062,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- Immutable Add Helpers ---
 
+  /// Handles adding a key/value pair immutably when the target fragment
+  /// currently holds a data entry (potential collision or update).
   ChampAddResult<K, V> _addImmutableDataCollision(
     K key,
     V value,
@@ -1176,6 +1178,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
   }
 
+  /// Handles adding a key/value pair immutably by delegating to a sub-node.
   ChampAddResult<K, V> _addImmutableDelegate(
     K key,
     V value,
@@ -1202,10 +1205,15 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       return (node: this, didAdd: addResult.didAdd); // No change
     }
 
-    // Create new content list with updated sub-node
-    final newContent = List<Object?>.of(content);
-    newContent[contentIdx] = addResult.node;
+    // Create new content list using spreads to replace the sub-node
+    final newContent = [
+      ...content.sublist(0, contentIdx), // Elements before replacement
+      addResult.node, // The new sub-node
+      ...content.sublist(contentIdx + 1), // Elements after replacement
+    ];
     final newNode = ChampInternalNode<K, V>(dataMap, nodeMap, newContent);
+
+    /// Handles adding a key/value pair immutably into an empty slot.
     return (node: newNode, didAdd: addResult.didAdd);
   }
 
@@ -1216,9 +1224,14 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int bitpos,
   ) {
     final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    // Create new content list with inserted data
-    final newContent = List<Object?>.of(content)
-      ..insertAll(dataIndex * 2, [key, value]);
+    final payloadIndex = dataIndex * 2;
+    // Create new content list using spreads for insertion
+    final newContent = [
+      ...content.sublist(0, payloadIndex), // Elements before insertion
+      key,
+      value, // Inserted elements
+      ...content.sublist(payloadIndex), // Elements after insertion
+    ];
     final newNode = ChampInternalNode<K, V>(
       dataMap | bitpos,
       nodeMap,
@@ -1300,6 +1313,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- Immutable Remove Helpers ---
 
+  /// Handles removing a key immutably when the target fragment holds a data entry.
   ChampRemoveResult<K, V> _removeImmutableData(K key, int frag, int bitpos) {
     final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
     final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
@@ -1321,6 +1335,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     return (node: this, didRemove: false); // Key not found
   }
 
+  /// Handles removing a key immutably by delegating to a sub-node.
   ChampRemoveResult<K, V> _removeImmutableDelegate(
     K key,
     int hash,
@@ -1539,6 +1554,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   // --- Immutable Update Helpers ---
 
+  /// Handles updating a key immutably when the target fragment holds a data entry.
   ChampUpdateResult<K, V> _updateImmutableData(
     K key,
     int hash,
@@ -1594,6 +1610,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
   }
 
+  /// Handles updating a key immutably by delegating to a sub-node.
   ChampUpdateResult<K, V> _updateImmutableDelegate(
     K key,
     int hash,
@@ -1634,6 +1651,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     );
   }
 
+  /// Handles updating/inserting a key immutably into an empty slot.
   ChampUpdateResult<K, V> _updateImmutableEmptySlot(
     K key,
     int frag,
@@ -1690,6 +1708,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       }
       // If owned, become immutable by removing the owner
       this._owner = null; // Use 'this._owner' to modify the instance field
+      /// Creates a new immutable node by replacing a data entry at [dataIndex]
+      /// with the given [subNode]. Used during immutable add/update operations
+      /// when a hash collision requires creating a deeper node.
+      ///
+      /// This involves complex list manipulation to rebuild the content array correctly.
       // Content list reference remains the same, but node is now immutable.
       // No need to copy with List.unmodifiable.
       return this;
@@ -1877,6 +1900,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     nodeMap ^= bitpos; // Remove node bit
   }
 
+  /// Checks if the node needs shrinking after a transient removal and performs
+  /// it (in place). Returns the potentially new node (e.g., if collapsed to
+  /// DataNode or EmptyNode), or `this` if no shrinking occurred.
   /// Checks if the node needs shrinking after a removal and performs it (in place).
   /// Returns the potentially new node (e.g., if collapsed to DataNode or EmptyNode).
   /// Assumes the node is transient and owned.

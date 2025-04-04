@@ -88,9 +88,14 @@ abstract class RrbNode<E> {
   /// element at the effective [index] within this subtree.
   ///
   /// The [index] must be non-negative and less than this node's [count].
-  /// This might involve node merges, rebalancing, and decreasing tree height.
+  /// This might involve node merges or rebalancing (using steal or plan-based
+  /// redistribution) to maintain RRB-Tree invariants if nodes become underfull.
+  /// The tree height may decrease if the root collapses.
   /// Returns `null` if the node becomes empty after removal.
-  /// Accepts an optional [owner] for transient operations.
+  ///
+  /// Accepts an optional [owner] to perform the operation transiently (mutating
+  /// nodes in place if possible). If [owner] is null or doesn't match the node's
+  /// owner, the operation is performed immutably, returning new node instances.
   /// Complexity: O(log N).
   RrbNode<E>? removeAt(int index, [TransientOwner? owner]); // Added owner
 
@@ -224,8 +229,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
       indexInChild = index - countBeforeSlot;
     } else {
       // --- Strict Path: Reverted to Linear Scan ---
-      // Iterate through children summing counts for strict nodes
-      // Direct calculation was causing errors, likely due to imperfect node fullness.
+      // Iterate through children summing counts for strict nodes.
+      // Direct O(1) calculation was causing errors, likely due to imperfect node fullness
+      // or relaxation not being perfectly tracked without a size table.
       int countBeforeSlot = 0;
       slot = 0; // Reset slot for linear scan
       while (slot < children.length - 1 &&
@@ -826,18 +832,27 @@ class RrbInternalNode<E> extends RrbNode<E> {
     return this;
   }
 
-  /// Handles rebalancing or merging of nodes after a removal operation
-  /// might have left a node underfull.
+  /// Handles rebalancing or merging of adjacent child nodes after a removal
+  /// operation might have left one or both underfull. It attempts to merge nodes
+  /// if their combined size fits within [kBranchingFactor], or steal elements/children
+  /// if one is underfull and the other has spare capacity. If neither merge nor
+  /// steal is possible or sufficient, it uses a plan-based rebalancing strategy
+  /// (`_createRebalancePlan`, `_executeRebalancePlan`/`_executeTransientRebalancePlan`)
+  /// to redistribute elements/children across the affected nodes according to the
+  /// Search Step Invariant.
   ///
-  /// `slot` is the index of the *first* node in the pair to consider merging or
-  /// rebalancing (i.e., node at `slot` and `slot + 1`).
+  /// - [slot]: The index of the *first* node in the pair to consider merging or
+  ///   rebalancing (i.e., node at `slot` and `slot + 1`).
+  /// - [children]: The list of child nodes (mutable if transient).
+  /// - [sizeTable]: The size table (mutable if transient).
+  /// - [owner]: The [TransientOwner] if operating transiently.
   ///
-  /// For the transient path (`owner != null`), this method modifies the `children`
-  /// and `sizeTable` lists directly.
-  /// For the immutable path (`owner == null`), this method returns the *new*
-  /// children and sizeTable lists resulting from the operation.
-  ///
-  /// Returns a tuple containing the potentially modified children list and size table.
+  /// **Returns:**
+  /// A tuple `(List<RrbNode<E>>, List<int>?)`.
+  /// - For the transient path (`owner != null`), returns the *same* (potentially mutated)
+  ///   `children` and `sizeTable` lists passed in.
+  /// - For the immutable path (`owner == null`), returns *new* list instances
+  ///   representing the children and size table after the operation.
   (List<RrbNode<E>>, List<int>?) _rebalanceOrMerge(
     int slot,
     List<RrbNode<E>> children, // The list of children (mutable if transient)
@@ -1351,11 +1366,17 @@ class RrbInternalNode<E> extends RrbNode<E> {
     }
   }
 
-  /// Generates a plan (list of target sizes) for distributing items/children
-  /// from a list of sibling nodes (`nodesToBalance`) to conform to the
-  /// Search Step Invariant (`S <= ceil(P / M) + E_MAX`).
+  /// Generates a rebalancing plan (list of target sizes) for a sequence of sibling
+  /// nodes (`nodesToBalance`). The goal is to redistribute the total number of
+  /// elements/children (`s`) among the minimum number of nodes (`n`) required
+  /// while satisfying the RRB-Tree Search Step Invariant: `n <= ceil(s / M) + E_MAX`,
+  /// where `M` is [kBranchingFactor] and `E_MAX` is [kEMax].
   ///
-  /// Based on `createConcatPlan` from reference implementations.
+  /// This ensures that nodes are reasonably full, maintaining efficient lookup performance.
+  /// The algorithm iteratively merges or redistributes items from the least full nodes
+  /// until the invariant is met.
+  ///
+  /// Based on `createConcatPlan` from Bagwell's RRB-Tree paper/reference implementations.
   List<int> _createRebalancePlan(List<RrbNode<E>> nodesToBalance) {
     if (nodesToBalance.isEmpty) {
       return [];
@@ -1459,8 +1480,12 @@ class RrbInternalNode<E> extends RrbNode<E> {
   /// list of nodes containing the same elements/children redistributed according
   /// to the plan.
   ///
-  /// Based on `executeConcatPlan` from reference implementations.
-  /// Handles both Leaf and Internal node redistribution.
+  /// This method performs immutable rebalancing by creating new node instances
+  /// according to the sizes specified in the [plan]. It reads from the
+  /// [originalNodes] and constructs a new list of balanced nodes.
+  ///
+  /// Based on `executeConcatPlan` from Bagwell's RRB-Tree paper/reference implementations.
+  /// Handles redistribution for both [RrbLeafNode] elements and [RrbInternalNode] children.
   List<RrbNode<E>> _executeRebalancePlan(
     List<RrbNode<E>> originalNodes,
     List<int> plan,
@@ -1622,16 +1647,22 @@ class RrbInternalNode<E> extends RrbNode<E> {
     return newNodes;
   }
 
-  /// Executes a rebalancing plan transiently, mutating nodes in place.
+  /// Executes a rebalancing plan transiently, potentially mutating nodes in place.
   ///
-  /// Takes a list of original sibling nodes (`originalNodes`) owned by `owner`,
-  /// and a `plan` (list of target sizes from `_createRebalancePlan`). It modifies
-  /// the `originalNodes` list and the nodes within it to conform to the plan.
-  /// Returns the list of nodes that now represent the balanced segment (this might
-  /// be a sublist or modified version of `originalNodes`).
+  /// Takes a list of sibling nodes (`originalNodes`) intended for rebalancing,
+  /// a `plan` (list of target sizes from `_createRebalancePlan`), and the current
+  /// [TransientOwner]. It redistributes the elements/children from the `originalNodes`
+  /// into a new list of nodes conforming to the `plan`.
   ///
-  /// **Important:** This method assumes `originalNodes` contains nodes that are
-  /// already mutable and owned by `owner` where necessary.
+  /// It attempts to reuse nodes from `originalNodes` if they are already owned by
+  /// the [owner], clearing and refilling them. Otherwise, it creates new mutable
+  /// nodes.
+  ///
+  /// **Returns:** A list containing the nodes that now represent the balanced segment.
+  /// These nodes are potentially mutable and owned by the [owner].
+  ///
+  /// **Important:** This method assumes the caller will replace the original nodes
+  /// in the parent's `children` list with the returned `finalBalancedNodes`.
   List<RrbNode<E>> _executeTransientRebalancePlan(
     List<RrbNode<E>> originalNodes, // Should contain mutable nodes
     List<int> plan,

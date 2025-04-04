@@ -38,7 +38,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   /// Internal constructor. Cannot be const due to mutable _cachedHashCode.
   ApexMapImpl._(this._root, this._length) : _cachedHashCode = null;
 
-  /// Factory constructor to create from a Map.
+  /// Factory constructor to create an immutable [ApexMap] from a standard Dart [Map].
+  ///
+  /// Uses an efficient O(N) bulk loading algorithm (`_buildNode`) that leverages
+  /// transient mutation internally for performance. The resulting map is fully immutable.
+  /// If the input [map] is empty, the canonical empty instance is returned.
   factory ApexMapImpl.fromMap(Map<K, V> map) {
     if (map.isEmpty) {
       return emptyInstance<K, V>();
@@ -61,13 +65,22 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     return ApexMapImpl._(frozenRoot, map.length);
   }
 
-  /// Recursive helper function for efficient bulk loading (O(N)).
+  /// Recursive helper function for efficient bulk loading (O(N)) using a two-pass strategy.
   /// Builds a CHAMP node (potentially transient) from a list of entries at a given shift level.
+  ///
+  /// 1. **First Pass:** Partitions entries based on hash fragments and determines the
+  ///    structure (data vs. node entries) for the current node level.
+  /// 2. **Second Pass:** Populates the node's content array, recursively calling
+  ///    `_buildNode` for partitions that require sub-nodes.
+  ///
+  /// Uses a [TransientOwner] to allow for in-place mutation during the build process,
+  /// which is then frozen into an immutable structure.
   static champ.ChampNode<K, V> _buildNode<K, V>(
     List<MapEntry<K, V>> entries,
     int shift,
     champ.TransientOwner owner,
   ) {
+    // --- Original Two-Pass Build Strategy ---
     if (entries.isEmpty) {
       return champ.ChampEmptyNode<K, V>();
     }
@@ -97,8 +110,6 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       // Collision nodes can be transient
       return champ.ChampCollisionNode<K, V>(firstHash, entries, owner);
     }
-
-    // --- Refactored _buildNode Logic ---
 
     // 1. First Pass: Partition and calculate final maps
     final List<List<MapEntry<K, V>>> partitions = List.generate(
@@ -266,6 +277,12 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     return ApexMapImpl._(addResult.node, newLength);
   }
 
+  /// Returns a new map containing all key-value pairs from this map and all
+  /// key-value pairs from the [other] map. If a key exists in both maps,
+  /// the value from the [other] map is used.
+  ///
+  /// This operation leverages transient mutation internally for efficiency,
+  /// especially when adding multiple entries. The resulting map is immutable.
   @override
   ApexMap<K, V> addAll(Map<K, V> other) {
     if (other.isEmpty) return this;
@@ -394,6 +411,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     return ApexMapImpl._(updateResult.node, newLength);
   }
 
+  /// Returns a new map where each value is replaced by the result of applying
+  /// the [updateFn] to its key and value.
+  ///
+  /// This operation leverages transient mutation internally for efficiency.
+  /// The resulting map is immutable.
   @override
   ApexMap<K, V> updateAll(V Function(K key, V value) updateFn) {
     if (isEmpty) return this;
@@ -765,6 +787,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     return ApexMapImpl<K2, V2>._(frozenNewRoot, newCount);
   }
 
+  /// Returns a new map containing only the key-value pairs for which the
+  /// [predicate] function returns `false`.
+  ///
+  /// This operation leverages transient mutation internally for efficiency.
+  /// The resulting map is immutable.
   @override
   ApexMap<K, V> removeWhere(bool Function(K key, V value) predicate) {
     if (isEmpty) return this;

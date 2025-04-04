@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~11:47 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~14:30 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -12,26 +12,26 @@
         -   Extracted `ChampTrieIterator` from `ApexMapImpl` into `champ_iterator.dart`.
         -   Optimized `ApexMapImpl.containsKey` by adding dedicated `ChampNode.containsKey` method.
         -   Optimized `bitCount` helper function in `champ_node.dart` using SWAR algorithm.
-        -   Refactored `ApexMap._buildNode` to reduce intermediate list allocations (~10% `fromMap` improvement initially, but regressed after later changes were reverted).
+        -   Refactored `ApexMap._buildNode` (Attempted single-pass strategy, improved `fromMap` but regressed other ops, reverted).
         -   Fixed `ApexList.toList` performance regression by reverting to recursive helper.
         -   Attempted optimization of `RrbInternalNode.fromRange` (Reverted - worsened performance).
-        -   Attempted optimization of `ChampInternalNode` immutable helpers (Reverted - worsened performance).
+        -   Attempted optimization of `ChampInternalNode` immutable helpers using list spreads (Reverted - worsened single-element performance).
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
         -   **(Resolved)** List Test Runtime Error: The `StateError: Cannot rebalance incompatible nodes...` in `RrbInternalNode._rebalanceOrMerge` has been addressed by implementing a plan-based rebalancing strategy (`_createRebalancePlan`, `_executeRebalancePlan`) for the immutable path. All `apex_list_test.dart` tests now pass.
         -   **(Resolved)** The transient path for `_rebalanceOrMerge` (plan-based case) now uses `_executeTransientRebalancePlan` to mutate nodes in place.
-    -   **Performance Status (Updated 2025-04-04 ~11:44 UTC+1 - Post `mergeDataEntries` Transient Opt Attempt):**
-        -   **ApexMap (Size: 10k):** (Attempted transient optimization in `mergeDataEntries`)
-            -   `add`: ~4.13 us (Slower than Native/FIC)
-            -   `addAll`: ~31.6 us (Excellent - Much faster than Native/FIC)
+    -   **Performance Status (Updated 2025-04-04 ~14:30 UTC+1 - Final state after optimization attempts):**
+        -   **ApexMap (Size: 10k):** (Optimization attempts reverted)
+            -   `add`: ~6.25 us (Slower than Native/FIC)
+            -   `addAll`: ~31.60 us (Excellent - Much faster than Native/FIC)
             -   `lookup[]`: ~0.24 us (Slower than Native/FIC)
-            -   `remove`: ~3.82 us (Much faster than FIC)
-            -   `update`: ~8.99 us (Faster than FIC)
-            -   `iterateEntries`: ~2783 us (Slower than Native/FIC)
-            -   `toMap`: ~8591 us (Slower than FIC)
-            -   `fromMap`: ~7865 us (Slower than FIC)
-            -   *Conclusion:* Allowing transient node creation in `mergeDataEntries` did not yield significant improvements. `addAll` performance remains excellent. Single-element ops, iteration, `toMap`, and `fromMap` are still significantly slower than competitors and need investigation/optimization.
+            -   `remove`: ~3.72 us (Much faster than FIC)
+            -   `update`: ~8.91 us (Faster than FIC)
+            -   `iterateEntries`: ~2794 us (Slow)
+            -   `toMap`: ~8736 us (Slow)
+            -   `fromMap`: ~8174 us (Slow)
+            -   *Conclusion:* Attempts to optimize immutable helpers (list spreads) and `_buildNode` (single-pass) resulted in performance regressions for core operations and were reverted. `addAll` performance remains excellent. Single-element immutable operations, iteration, and `fromMap` remain significantly slower than competitors. Further map optimization is deferred.
         -   **ApexList (Size: 10k):** (Post `fromIterable` recursive concat strategy)
             -   `add`: ~27.1 us (Much faster than FIC)
             -   `addAll`: ~31.0 us (Excellent - `addAll` optimization holds)
@@ -61,9 +61,9 @@
 6.  **(DONE)** **Benchmark `ApexMap`:** Established baseline performance. Identified optimization targets.
 7.  **(DONE)** **Optimize `ApexList.addAll`:** Replaced transient add loop with concatenation strategy. Benchmarks show significant improvement.
 8.  **(DONE)** **Optimize `ApexList.fromIterable`:** Switched to recursive concatenation strategy. Build slower, but `lookup`/`sublist` much faster.
-9.  **(TODO / Medium Priority)** **Optimize `ApexList.lookup[]`:** Investigate tree traversal/indexing logic (strict path reverted).
+9.  **(DONE)** **Optimize `ApexList.lookup[]`:** Investigated O(1) strict path calculation. Reverted due to correctness issues. Kept existing linear scan for strict nodes. Performance remains good due to `fromIterable` change.
 10. **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`/`remove`/`update`:** Explore further potential micro-optimizations in immutable path list handling or core logic.
-11. **(Lower Priority)** **Investigate `ApexMap.fromMap`:** Revisit `_buildNode` refactor or explore alternative bulk load strategies.
+11. **(DONE - Reverted)** **Investigate `ApexMap.fromMap`:** Attempted single-pass `_buildNode` refactor. Improved `fromMap` but regressed other ops. Reverted.
 12. **Continue Documentation:** Update API docs based on refactoring and fixes.
 
 ## Open Questions / Decisions

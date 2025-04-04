@@ -45,10 +45,16 @@ class ApexListImpl<E> extends ApexList<E> {
 
   /// Factory constructor to create an [ApexListImpl] from an [Iterable].
   ///
-  /// Uses an efficient O(N) bottom-up transient build algorithm.
-  /// It first creates transient leaf nodes, then builds transient internal
-  /// nodes level by level until a single root node is formed. Finally,
-  /// the entire transient tree is frozen into an immutable state.
+  /// Creates an [ApexList] by efficiently building an RRB-Tree from the
+  /// given [elements]. It uses a recursive divide-and-conquer strategy,
+  /// building sub-trees from halves of the input and concatenating them.
+  /// This approach optimizes for subsequent fast lookups (`[]`) and sublist
+  /// operations, though the initial build time might be slightly higher
+  /// than a purely bottom-up approach for very large inputs.
+  ///
+  /// If [elements] is already an [ApexList], it is returned directly without modification.
+  /// If [elements] is a standard [List], it's used directly. Other [Iterable] types
+  /// are first converted to a [List].
   factory ApexListImpl.fromIterable(Iterable<E> elements) {
     // Optimization: If input is already an ApexListImpl, return it directly.
     if (elements is ApexListImpl<E>) {
@@ -175,6 +181,13 @@ class ApexListImpl<E> extends ApexList<E> {
     return ApexListImpl._(newRoot, _length + 1);
   }
 
+  /// Returns a new list containing all elements of this list followed by all
+  /// elements of the [iterable].
+  ///
+  /// This operation is optimized by creating a new [ApexList] from the [iterable]
+  /// using the efficient `fromIterable` factory and then concatenating the
+  /// underlying RRB-Trees of the two lists in O(log N) time, where N is the
+  /// combined size.
   @override
   ApexList<E> addAll(Iterable<E> iterable) {
     // Optimize for empty iterable
