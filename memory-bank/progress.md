@@ -1,12 +1,12 @@
 # Progress: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~06:36 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~07:07 UTC+1)
 
 **Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established.
 **Phase 2: Core Design & API Definition COMPLETE.** Public APIs for `ApexList` and `ApexMap` defined. Core node structure files outlined. Basic implementation classes created. `toMap` added to `ApexMap`.
 **Phase 3: Implementation & Unit Testing COMPLETE** (Excluding deferred `removeAt` debugging). Core logic for `ApexListImpl` and `ApexMapImpl` implemented and unit tested. Transient logic refined. `toMap` implemented in `ApexMapImpl`.
-**Phase 4: Refactoring & Debugging IN PROGRESS.** File writing issues resolved. Map test failures fixed. `ApexMap.fromMap` performance addressed. `ApexList.toList` refactored. `ApexList` rebalancing bug remains.
-**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** `ApexMap.fromMap` optimized. `ApexList.toList` refactored. `ApexList.fromIterable` optimization attempted (needs benchmarking).
+**Phase 4: Refactoring & Debugging IN PROGRESS.** File writing issues resolved. Map test failures fixed (`ApexMap` tests pass). `ApexList` rebalancing bug remains. Utilities extracted (`rrb_tree_utils.dart`, `champ_iterator.dart`). Node structures refactored.
+**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** `ApexMap.fromMap` optimized (needs benchmarking). `ApexList.toList` refactored (needs benchmarking). `ApexList.fromIterable` optimization attempted (needs benchmarking).
 
 ## What Works
 
@@ -18,8 +18,8 @@
 -   `ApexMapImpl` methods implemented, using transient operations for bulk methods. `fromMap` uses efficient O(N) recursive bulk loading. Shows strong performance for modifications/iteration and `toMap`.
 -   `ApexListImpl` methods implemented. `addAll` uses transient logic. `operator+` uses efficient O(log N) concatenation. `removeWhere` reverted to immutable filter. `sublist` uses efficient O(log N) tree slicing. `toList` refactored to use iterator. **(Refactored - utils extracted)**
 -   Efficient iterators implemented for `ApexMapImpl` (`lib/src/map/champ_iterator.dart`) and `ApexListImpl` (`_RrbTreeIterator`). **(Map iterator extracted)**
--   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases. `ApexMap` tests pass. `ApexList` tests fail due to known `removeAt` issue.
--   Benchmark suite created (`benchmark/`) comparing `ApexList`/`ApexMap` against native and FIC collections. Conversion benchmarks added. Latest results gathered.
+-   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases. **`ApexMap` tests pass.** `ApexList` tests fail due to known `removeAt` issue.
+-   Benchmark suite created (`benchmark/`) comparing `ApexList`/`ApexMap` against native and FIC collections. Conversion benchmarks added. Latest results gathered (need updating for recent optimizations).
 
 ## What's Left to Build (High-Level)
 
@@ -33,19 +33,16 @@
 
 ## Known Issues / Blockers
 
--   **(Resolved)** File writing tool issues.
--   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error).
--   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Requires significant refactor of rebalancing logic.
--   **(Resolved)** `ApexMap.fromMap` performance issue addressed with O(N) bulk loading.
--   `ApexList.fromIterable` performance (`~1760 us`) optimization attempted by modifying node constructors to avoid `sublist` (needs benchmarking).
--   `ApexList.toList` performance (`~880 us`) potentially improved by using iterator (needs benchmarking).
+-   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Requires significant refactor of rebalancing logic. **(High Priority Block)**
+-   **(Needs Benchmarking)** `ApexMap.fromMap` performance optimization needs verification via benchmarks.
+-   **(Needs Benchmarking)** `ApexList.fromIterable` performance optimization attempt needs verification via benchmarks.
+-   **(Needs Benchmarking)** `ApexList.toList` performance improvement from iterator refactor needs verification via benchmarks.
 -   `ApexMap` single `add`/`lookup` performance is acceptable but slower than competitors (lower priority).
--   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed and requires redesign. Transient path remains unimplemented.
+-   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed and requires redesign. Transient path remains unimplemented. (Related to the High Priority Block).
 
-## Next Milestones
+## Next Milestones (Reflecting Active Context)
 
-1.  **(Lower Priority / Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
-2.  **(Done - Needs Benchmarking)** **Optimize `ApexList.fromIterable`:** Implemented node constructor changes to avoid `sublist`.
-3.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap` and `ApexList.toList`.
-4.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
-5.  **Continue Documentation:** Update API docs and Memory Bank based on recent changes.
+1.  **(Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
+2.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap`, `ApexList.toList`, and `ApexList.fromIterable`.
+3.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
+4.  **Continue Documentation:** Update API docs and Memory Bank based on recent changes.

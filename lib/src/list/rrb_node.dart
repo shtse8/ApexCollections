@@ -1048,28 +1048,46 @@ class RrbInternalNode<E> extends RrbNode<E> {
 
           return (newParentChildren, newParentSizeTable);
         } else {
-          // Cannot steal: Merge the two nodes even if oversized, then split.
-          // 1. Merge node1 and node2 (similar to 'canMerge' logic)
-          RrbNode<E> mergedNode;
-          if (node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) {
-            final combinedElements = [...node1.elements, ...node2.elements];
-            // Create potentially oversized leaf using default constructor
-            mergedNode = RrbLeafNode<E>(combinedElements);
-          } else if (node1 is RrbInternalNode<E> &&
-              node2 is RrbInternalNode<E> &&
-              node1.height == node2.height) {
-            final combinedChildren = [...node1.children, ...node2.children];
-            // Create potentially oversized internal node (size table calculated later)
-            // Use default constructor
-            mergedNode = RrbInternalNode<E>(
-              node1.height,
-              combinedCount,
-              combinedChildren,
-              null,
-            );
+          // Cannot steal: Attempt merge-then-split ONLY if nodes are compatible.
+          // If nodes are incompatible (different types/heights), this specific
+          // rebalancing scenario is not yet implemented for the immutable path.
+          RrbNode<E> mergedNode; // Declare mergedNode here
+          if ((node1 is RrbLeafNode<E> && node2 is RrbLeafNode<E>) ||
+              (node1 is RrbInternalNode<E> &&
+                  node2 is RrbInternalNode<E> &&
+                  node1.height == node2.height)) {
+            // Nodes are compatible, proceed with merge-then-split
+            // 1. Merge node1 and node2 (similar to 'canMerge' logic)
+            if (node1 is RrbLeafNode<E>) {
+              // Already checked node2 is also Leaf
+              final combinedElements = [
+                ...node1.elements,
+                ...(node2 as RrbLeafNode<E>).elements,
+              ];
+              // Create potentially oversized leaf using default constructor
+              mergedNode = RrbLeafNode<E>(combinedElements);
+            } else {
+              // Both must be Internal nodes of same height
+              final combinedChildren = [
+                ...(node1 as RrbInternalNode<E>).children,
+                ...(node2 as RrbInternalNode<E>).children,
+              ];
+              // Create potentially oversized internal node (size table calculated later)
+              // Use default constructor
+              mergedNode = RrbInternalNode<E>(
+                node1.height, // Height is same
+                combinedCount,
+                combinedChildren,
+                null,
+              );
+            }
           } else {
-            throw StateError(
-              'Cannot merge-split nodes of different types or heights: ${node1.runtimeType} and ${node2.runtimeType}',
+            // Nodes are incompatible (different types or heights).
+            // This rebalancing case (cannot merge, cannot steal, incompatible nodes)
+            // requires more complex logic (e.g., adjusting heights) which is not
+            // implemented for the immutable path.
+            throw UnimplementedError(
+              'Immutable rebalance for incompatible node types/heights (cannot merge/steal) not implemented: ${node1.runtimeType} (height ${node1.height}) and ${node2.runtimeType} (height ${node2.height})',
             );
           }
 
@@ -1099,14 +1117,12 @@ class RrbInternalNode<E> extends RrbNode<E> {
                   (sum, node) => sum + (node.count ?? 0),
                 );
             // Ensure count is non-nullable with default 0
-            final newNode2Count =
-                combinedCount -
-                (newNode1Count ?? 0); // Use default if newNode1Count is null
+            final newNode2Count = combinedCount - newNode1Count;
 
             // Use default constructor
             newNode1 = RrbInternalNode<E>(
               mergedNode.height,
-              newNode1Count ?? 0,
+              newNode1Count, // Use calculated count
               leftChildren,
               newNode1SizeTable,
             );

@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~06:36 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~07:13 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -13,7 +13,7 @@
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
-        -   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Attempts to fix were reverted. Requires deeper investigation/refactor of rebalancing logic.
+        -   **(Known Issue Clarified)** List Test Runtime Error: `UnimplementedError: Immutable rebalance for incompatible node types/heights (cannot merge/steal) not implemented...` in `RrbInternalNode._rebalanceOrMerge`. The specific case where nodes cannot be merged or stolen due to type/height mismatch now throws this error explicitly, replacing the previous `StateError`. Requires significant refactor/research of rebalancing logic. The transient path also remains unimplemented.
     -   **Performance Status (from previous context, likely unchanged):**
         -   **ApexMap:**
             -   Bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), `toMap` remain **excellent**.
@@ -29,16 +29,16 @@
             -   Iteration (`iterateSum`) performance (`~260-300 us`) is acceptable.
 
 ## Current Focus
- 
--   **ApexList:** Addressing known issues and performance optimizations.
--   **Documentation:** Updating Memory Bank files.
+
+-   **ApexList:** Addressing known issues (primarily the `_rebalanceOrMerge` implementation).
+-   **Documentation:** Updating Memory Bank files (now complete for this step).
 
 ## Next Immediate Steps
- 
-1.  **Update Memory Bank:** Reflect recent fixes and current state in `progress.md`.
-2.  **(Lower Priority / Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
+
+1.  **(DONE)** **Update Memory Bank:** Reflected recent fixes and current state in `progress.md` and `activeContext.md`.
+2.  **(Blocked / High Priority)** **FIX `_rebalanceOrMerge` Error:** Address the `UnimplementedError` for incompatible node rebalancing (immutable path) in `rrb_node.dart`. Also need to implement the transient path. (Requires significant refactor/research).
 3.  **(Done - Needs Benchmarking)** **Optimize `ApexList.fromIterable`:** Implemented node constructor changes to avoid `sublist` copies.
-4.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap` and `ApexList.toList`.
+4.  **(Lower Priority / Blocked by #2)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap`, `ApexList.toList`, and `ApexList.fromIterable` once list implementation is stable.
 5.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
 6.  **Continue Documentation:** Update API docs based on refactoring and fixes.
 
@@ -47,4 +47,4 @@
 -   Need for transient/mutable builders?
     -   **ApexMap:** Decided - Low priority.
     -   **ApexList:** Decided - Worth exploring/implementing optimizations, pending iterator investigation.
--   How to correctly implement RRB-Tree rebalancing/merging/collapsing logic, especially for the immutable path in `removeAt`? (Needs significant research/refactor - Related to Step 2 above)
+-   How to correctly implement RRB-Tree rebalancing/merging/collapsing logic, especially for the immutable path in `removeAt` when nodes are incompatible (cannot merge/steal)? (Needs significant research/refactor - Related to Step 2 above)
