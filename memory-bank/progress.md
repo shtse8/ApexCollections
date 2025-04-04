@@ -33,12 +33,12 @@
 
 ## Known Issues / Blockers
 
--   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Requires significant refactor of rebalancing logic. **(High Priority Block)**
+-   **(Known Issue)** List Test Runtime Error: Now throws `StateError: Cannot rebalance incompatible nodes (cannot merge/steal)...` in `RrbInternalNode._rebalanceOrMerge` (changed from `UnimplementedError` as an interim step). This occurs when incompatible nodes cannot be merged or steal elements. Requires significant refactor of rebalancing logic. **(High Priority Block)**
 -   **(Needs Benchmarking)** `ApexMap.fromMap` performance optimization needs verification via benchmarks.
 -   **(Needs Benchmarking)** `ApexList.fromIterable` performance optimization attempt needs verification via benchmarks.
 -   **(Needs Benchmarking)** `ApexList.toList` performance improvement from iterator refactor needs verification via benchmarks.
 -   `ApexMap` single `add`/`lookup` performance is acceptable but slower than competitors (lower priority).
--   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed and requires redesign. Transient path remains unimplemented. (Related to the High Priority Block).
+-   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed (throws `StateError` for incompatible nodes) and requires redesign. Transient path remains unimplemented. (Related to the High Priority Block).
 
 ## Next Milestones (Reflecting Active Context)
 

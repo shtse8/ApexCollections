@@ -13,7 +13,7 @@
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
-        -   **(Known Issue Clarified)** List Test Runtime Error: `UnimplementedError: Immutable rebalance for incompatible node types/heights (cannot merge/steal) not implemented...` in `RrbInternalNode._rebalanceOrMerge`. The specific case where nodes cannot be merged or stolen due to type/height mismatch now throws this error explicitly, replacing the previous `StateError`. Requires significant refactor/research of rebalancing logic. The transient path also remains unimplemented.
+        -   **(Known Issue)** List Test Runtime Error: Now throws `StateError: Cannot rebalance incompatible nodes (cannot merge/steal)...` in `RrbInternalNode._rebalanceOrMerge` (changed from `UnimplementedError` as an interim step). The specific case where nodes cannot be merged or stolen due to type/height mismatch remains unhandled. Requires significant refactor/research of rebalancing logic. The transient path also remains unimplemented.
     -   **Performance Status (from previous context, likely unchanged):**
         -   **ApexMap:**
             -   Bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), `toMap` remain **excellent**.

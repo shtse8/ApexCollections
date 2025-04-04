@@ -1298,7 +1298,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         );
 
       // Copy nodes before removed node
-      final oldNodeStartIndex = oldDataEnd;
+      final oldNodeStartIndex =
+          bitCount(dataMap) * 2; // Start of nodes in old content
       final newNodeStartIndex = newDataCount * 2;
       if (nodeIndex > 0)
         newContentList.setRange(
@@ -1707,18 +1708,21 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final frag = bitCount(
       bitpos - 1,
     ); // Get the index (0-31) from the bit position
-    // Calculate where the new node *will* go based on the *final* nodeMap
-    final targetNodeMap = nodeMap | bitpos;
+    // Calculate where the new node *will* go based on the *final* nodeMap state
+    final targetNodeMap =
+        nodeMap | bitpos; // Node map *after* adding the new node bit
     final targetNodeIndex = bitCount(
       targetNodeMap & (bitpos - 1),
-    ); // Nodes before the new one
+    ); // Nodes before the new one in the final map
 
     // --- Modify content list ---
     // 1. Remove the data entry (key, value)
     content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
     // 2. Insert the sub-node at the correct position in the node section
     // The node section starts after the remaining data entries
-    final nodeInsertPos = (bitCount(dataMap) - 1) * 2 + targetNodeIndex;
+    final nodeInsertPos =
+        (bitCount(dataMap) - 1) * 2 +
+        targetNodeIndex; // Index in content *after* data removal
     // Ensure insertion index is valid
     if (nodeInsertPos > content.length) {
       content.add(subNode); // Append if index is exactly at the end
@@ -1738,7 +1742,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     assert(isTransient(_owner));
     final dataPayloadIndex =
         dataIndexFromFragment(indexFragment(0, hashOfKey(key))) *
-        2; // Index where new data goes
+        2; // Index where new data *will* go
     final nodeContentIndex = contentIndexFromNodeIndex(nodeIndex);
 
     // Remove the node entry

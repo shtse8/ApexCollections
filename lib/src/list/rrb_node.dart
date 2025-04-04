@@ -1086,8 +1086,9 @@ class RrbInternalNode<E> extends RrbNode<E> {
             // This rebalancing case (cannot merge, cannot steal, incompatible nodes)
             // requires more complex logic (e.g., adjusting heights) which is not
             // implemented for the immutable path.
-            throw UnimplementedError(
-              'Immutable rebalance for incompatible node types/heights (cannot merge/steal) not implemented: ${node1.runtimeType} (height ${node1.height}) and ${node2.runtimeType} (height ${node2.height})',
+            // TODO: Implement complex rebalancing for incompatible nodes (height adjustment?)
+            throw StateError(
+              'Cannot rebalance incompatible nodes (cannot merge/steal): ${node1.runtimeType} (height ${node1.height}) and ${node2.runtimeType} (height ${node2.height})',
             );
           }
 
