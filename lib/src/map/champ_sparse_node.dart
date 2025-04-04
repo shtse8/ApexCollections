@@ -1,6 +1,8 @@
 /// Defines the [ChampSparseNode] class, a bitmap node optimized for low child counts.
 library;
 
+import 'package:collection/collection.dart'; // For ListEquality
+
 import 'champ_node_base.dart';
 import 'champ_bitmap_node.dart';
 import 'champ_utils.dart';
@@ -1145,5 +1147,21 @@ class ChampSparseNode<K, V> extends ChampBitmapNode<K, V> {
       List.of(children, growable: true), // Create mutable copy
       owner,
     );
+  }
+
+  // Equality for bitmap nodes depends on the bitmaps and the content list.
+  static const _equality = ListEquality();
+
+  @override
+  int get hashCode => Object.hash(dataMap, nodeMap, _equality.hash(children));
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    // Check type and bitmaps first for short-circuiting (as per CHAMP paper)
+    return other is ChampSparseNode<K, V> &&
+        dataMap == other.dataMap &&
+        nodeMap == other.nodeMap &&
+        _equality.equals(children, other.children);
   }
 } // End of ChampSparseNode

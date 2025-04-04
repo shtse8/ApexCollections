@@ -1,6 +1,8 @@
 /// Defines the [ChampArrayNode] class, a bitmap node optimized for high child counts.
 library;
 
+import 'package:collection/collection.dart'; // For ListEquality
+
 import 'champ_node_base.dart';
 import 'champ_bitmap_node.dart';
 import 'champ_utils.dart';
@@ -1115,5 +1117,21 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
       // Key not found, no ifAbsentFn
       return (node: this, sizeChanged: false);
     }
+  }
+
+  // Equality for bitmap nodes depends on the bitmaps and the content list.
+  static const _equality = ListEquality();
+
+  @override
+  int get hashCode => Object.hash(dataMap, nodeMap, _equality.hash(content));
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    // Check type and bitmaps first for short-circuiting (as per CHAMP paper)
+    return other is ChampArrayNode<K, V> &&
+        dataMap == other.dataMap &&
+        nodeMap == other.nodeMap &&
+        _equality.equals(content, other.content);
   }
 } // End of ChampArrayNode

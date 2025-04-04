@@ -1,6 +1,8 @@
 /// Defines the [ChampCollisionNode] class, representing a CHAMP node with hash collisions.
 library;
 
+import 'package:collection/collection.dart'; // For SetEquality
+
 // Remove unused: import 'dart:collection'; // MapEntry is part of dart:core
 
 import 'champ_node_base.dart';
@@ -292,5 +294,20 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       return super.freeze(owner);
     }
     return this; // Already immutable or not owned
+  }
+
+  // Equality for collision nodes depends on the set of entries, order doesn't matter.
+  static const _equality = SetEquality<MapEntry>();
+
+  @override
+  int get hashCode =>
+      Object.hash(collisionHash, _equality.hash(entries.toSet()));
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ChampCollisionNode<K, V> &&
+        collisionHash == other.collisionHash &&
+        _equality.equals(entries.toSet(), other.entries.toSet());
   }
 }

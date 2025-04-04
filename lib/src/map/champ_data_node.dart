@@ -121,4 +121,16 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
 
   @override
   ChampNode<K, V> freeze(TransientOwner? owner) => this; // Already immutable
+
+  @override
+  int get hashCode => Object.hash(dataHash, dataKey, dataValue);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ChampDataNode<K, V> &&
+        dataHash == other.dataHash && // Check hash first for quick exit
+        dataKey == other.dataKey &&
+        dataValue == other.dataValue;
+  }
 }

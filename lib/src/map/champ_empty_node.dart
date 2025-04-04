@@ -75,4 +75,10 @@ class ChampEmptyNode<K, V> extends ChampNode<K, V> {
 
   @override
   ChampNode<K, V> freeze(TransientOwner? owner) => this; // Already immutable
+
+  @override
+  int get hashCode => 0; // Canonical empty node has a constant hash code
+
+  @override
+  bool operator ==(Object other) => other is ChampEmptyNode; // Singleton comparison
 }

@@ -229,3 +229,42 @@ Based on Steindorfer (2017) thesis, Chapter 3.4:
 -   [ ] Read the summary/comparison resource to grasp the key differences between CHAMP and HAMT.
 -   [ ] Study Steindorfer's thesis/papers for the detailed CHAMP specification.
 -   [ ] Assess feasibility for `const` empty map creation in Dart.
+
+## CHAMP Optimizations (OOPSLA'15 - Steindorfer & Vinju)
+
+Key optimizations proposed for Hash-Array Mapped Tries (HAMT) on the JVM, resulting in the CHAMP design:
+
+1.  **Node Layout Reordering & Compression:**
+    *   Separates sub-node references and key/value data entries within the node's content array.
+    *   Uses two bitmaps (`dataMap`, `nodeMap`) to track the presence of data and nodes respectively.
+    *   **Optimized Layout:** Stores sub-node references in *reverse* order at the end of the array. This allows calculating the node index via `array.length - 1 - index(nodeMap, bitpos)`, avoiding the need to calculate `bitCount(dataMap)` for offset.
+    *   **Benefit:** Improves cache locality for iteration (data processed first, then nodes) and saves memory in maps by eliminating empty slots needed in traditional HAMTs for node pointers.
+
+2.  **Canonical Representation via Compaction on Delete:**
+    *   Ensures the trie remains in its most compact form even after deletions.
+    *   Defines an invariant: `branchSize >= 2 * nodeArity + payloadArity` (sub-trees with arity < 2 are collapsed or inlined).
+    *   Deletion algorithm recursively removes the element and then compacts/inlines nodes on the way back up based on arity and an approximated `sizePredicate` (Empty, One, MoreThanOne) to avoid costly full subtree size calculations.
+    *   **Benefit:** Improves cache locality, reduces memory footprint, and enables faster equality checks.
+
+3.  **Faster Equality Checking:**
+    *   Leverages the canonical representation.
+    *   **Short-circuiting:** When comparing two CHAMP nodes, if their `dataMap` or `nodeMap` differ, they cannot be equal, allowing immediate return `false`.
+    *   If bitmaps match, recursively compare content (e.g., using `ListEquality` for the node's content array).
+    *   **Benefit:** Makes equality checking significantly faster, often sub-linear, especially when comparing derived collections that share structure.
+
+4.  **Efficient Iterators:**
+    *   Uses a pre-allocated stack (or simulates one) for node traversal.
+    *   Iterates data entries within a node *before* descending into child nodes.
+    *   Reduces iteration complexity from O(m + n) to O(n) node visits (where n is node count, m is data entry count).
+    *   **Benefit:** Improves iteration performance due to better cache locality and fewer node visits.
+
+5.  **Hash Code Memoization (Optional - MEMCHAMP):**
+    *   **Collection Hash Code:** Cache the entire collection's hash code in the outer wrapper object and update it incrementally on add/remove. Requires insertion-order independent hashing.
+    *   **Element Hash Code:** Consolidate element hash codes into an integer array within each node (field consolidation) instead of separate leaf nodes. Trades memory for potentially faster lookups (fewer `hashCode`/`equals` calls).
+
+**Current Implementation Status (ApexMap):**
+*   Node Layout: Implemented optimized layout (nodes reversed at end). (Done during file splitting refactor)
+*   Canonical Representation: Deletion logic includes shrinking/collapsing. (Done during file splitting refactor)
+*   Faster Equality: Implemented `hashCode`/`==` with bitmap short-circuiting. (Done)
+*   Efficient Iterators: Basic structure exists, but optimization needed (e.g., avoid temporary MapEntry). (Pending)
+*   Memoization: Not implemented. (Pending)
