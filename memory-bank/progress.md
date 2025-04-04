@@ -1,12 +1,12 @@
 # Progress: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~06:15 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~06:36 UTC+1)
 
 **Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established.
 **Phase 2: Core Design & API Definition COMPLETE.** Public APIs for `ApexList` and `ApexMap` defined. Core node structure files outlined. Basic implementation classes created. `toMap` added to `ApexMap`.
 **Phase 3: Implementation & Unit Testing COMPLETE** (Excluding deferred `removeAt` debugging). Core logic for `ApexListImpl` and `ApexMapImpl` implemented and unit tested. Transient logic refined. `toMap` implemented in `ApexMapImpl`.
 **Phase 4: Refactoring & Debugging IN PROGRESS.** File writing issues resolved. Map test failures fixed. `ApexMap.fromMap` performance addressed. `ApexList.toList` refactored. `ApexList` rebalancing bug remains.
-**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** `ApexMap.fromMap` optimized. `ApexList.toList` refactored (needs benchmarking). `ApexList.fromIterable` needs optimization.
+**Phase 4: Performance Optimization & Benchmarking IN PROGRESS.** `ApexMap.fromMap` optimized. `ApexList.toList` refactored. `ApexList.fromIterable` optimization attempted (needs benchmarking).
 
 ## What Works
 
@@ -27,7 +27,7 @@
 -   **Phase 2:** Core Design & API Definition **(DONE)**
 -   **Phase 3:** Implementation & Unit Testing **(DONE - Known Issue Deferred)**
 -   **Phase 4:** Refactoring & Debugging **(IN PROGRESS - List `removeAt` bug)**
--   **Phase 4:** Performance Optimization & Benchmarking **(IN PROGRESS - List `fromIterable`, Benchmarking)**
+-   **Phase 4:** Performance Optimization & Benchmarking **(IN PROGRESS - Benchmarking)**
 -   **Phase 5:** Documentation & Examples (GitHub Pages, `dart doc`).
 -   **Phase 6:** CI/CD & Publishing (`pub.dev`).
 
@@ -37,7 +37,7 @@
 -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error).
 -   **(Known Issue)** List Test Runtime Error: `Bad state: Cannot merge-split nodes of different types or heights: RrbLeafNode<int> and RrbInternalNode<int>` in `RrbInternalNode._rebalanceOrMerge`. Requires significant refactor of rebalancing logic.
 -   **(Resolved)** `ApexMap.fromMap` performance issue addressed with O(N) bulk loading.
--   `ApexList.fromIterable` performance (`~1760 us`) needs optimization (avoid `sublist`).
+-   `ApexList.fromIterable` performance (`~1760 us`) optimization attempted by modifying node constructors to avoid `sublist` (needs benchmarking).
 -   `ApexList.toList` performance (`~880 us`) potentially improved by using iterator (needs benchmarking).
 -   `ApexMap` single `add`/`lookup` performance is acceptable but slower than competitors (lower priority).
 -   RRB-Tree rebalancing/merging logic in `RrbInternalNode._rebalanceOrMerge` (immutable path) is flawed and requires redesign. Transient path remains unimplemented.
@@ -45,7 +45,7 @@
 ## Next Milestones
 
 1.  **(Lower Priority / Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
-2.  **(Lower Priority)** **Optimize `ApexList.fromIterable`:** Implement O(N) bulk loading (requires node changes).
+2.  **(Done - Needs Benchmarking)** **Optimize `ApexList.fromIterable`:** Implemented node constructor changes to avoid `sublist`.
 3.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap` and `ApexList.toList`.
 4.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
 5.  **Continue Documentation:** Update API docs and Memory Bank based on recent changes.

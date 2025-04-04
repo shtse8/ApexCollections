@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~06:14 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~06:36 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -25,7 +25,7 @@
             -   `removeWhere` performance is acceptable (`~2500 us`).
             -   `sublist` performance is **excellent** (`~32 us`).
             -   `toList` performance (`~960 us`) potentially improved by switching to iterator-based implementation (Needs new benchmarks).
-            -   `fromIterable` performance (`~1760 us`) needs optimization (requires node constructor changes to avoid `sublist`).
+            -   `fromIterable` performance (`~1760 us`) optimization attempted by modifying node constructors to avoid `sublist` copies (Needs new benchmarks).
             -   Iteration (`iterateSum`) performance (`~260-300 us`) is acceptable.
 
 ## Current Focus
@@ -37,7 +37,7 @@
  
 1.  **Update Memory Bank:** Reflect recent fixes and current state in `progress.md`.
 2.  **(Lower Priority / Blocked)** **FIX `_rebalanceOrMerge` Error:** Address the `Bad state` error in `rrb_node.dart`. (Requires significant refactor).
-3.  **(Lower Priority)** **Optimize `ApexList.fromIterable`:** Implement O(N) bulk loading (requires node changes).
+3.  **(Done - Needs Benchmarking)** **Optimize `ApexList.fromIterable`:** Implemented node constructor changes to avoid `sublist` copies.
 4.  **(Lower Priority)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap` and `ApexList.toList`.
 5.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore potential micro-optimizations.
 6.  **Continue Documentation:** Update API docs based on refactoring and fixes.
