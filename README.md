@@ -25,48 +25,48 @@ ApexCollections aims to be the premier immutable collection library for Dart, su
 This library is currently under **active development**.
 
 *   Core implementations for `ApexList` and `ApexMap` are functionally complete.
-*   Extensive unit tests are in place (`ApexMap` tests passing, `ApexList` tests partially failing due to known issue).
+*   Extensive unit tests are in place. **All `ApexList` and `ApexMap` tests are passing.**
+*   The core `ApexList` rebalancing bug (`StateError: Cannot rebalance incompatible nodes...`) has been **fixed**.
 *   Ongoing work includes:
-    *   **High Priority:** Fixing a known bug in `ApexList.removeAt` rebalancing logic (`StateError: Cannot rebalance incompatible nodes...`).
-    *   Investigating performance bottlenecks, particularly for `ApexMap` single-element operations and `fromMap`/`fromIterable` conversions.
+    *   **High Priority:** Optimizing the transient path for plan-based rebalancing in `ApexList` to improve `addAll`/`fromIterable` performance.
+    *   Investigating performance bottlenecks, particularly for `ApexList.lookup[]` and `ApexMap` single-element operations.
     *   Improving documentation.
 
 ## Performance (Latest Benchmark Results)
 
-**Important Note:** These benchmarks were run on **2025-04-04 ~10:41 UTC+1** with Dart SDK [Version, if known] on the development machine. The `ApexList.removeAt` operation still has known implementation issues that might affect its stability or performance under certain conditions, even though the benchmark completed. Results may vary on different machines or SDK versions.
+**Important Note:** These benchmarks were run on **2025-04-04 ~11:07 UTC+1** with Dart SDK [Version, if known] on the development machine after fixing the core `ApexList` rebalancing bug. Results may vary on different machines or SDK versions. Further optimizations are planned.
 
 **List Benchmarks (Size: 10,000)**
 
-| Operation                     | Native List (mutable) | IList (FIC) | ApexList    | Unit | Notes                     |
-| :---------------------------- | :-------------------- | :---------- | :---------- | :--- | :------------------------ |
-| `add` (single element)        | 0.10                  | 1490.24     | 27.10       | µs   |                           |
-| `addAll`                      | 11372.11              | 1.69        | 190.23      | µs   | FIC `addAll` is optimized |
-| `lookup[]` (middle index)     | 0.01                  | 0.04        | 0.33        | µs   |                           |
-| `removeAt` (middle index)     | 2412.44¹              | 692.11      | 16.82²      | µs   | ApexList has known issues |
-| `removeWhere`                 | 5947.82               | 1827.87     | 2496.16     | µs   |                           |
-| `iterateSum` (full traversal) | 28.46                 | 262.72      | 234.23      | µs   |                           |
-| `sublist`                     | 1071.11               | 1073.32     | 31.84       | µs   |                           |
-| `concat(+)`                   | 3549.83               | 0.88        | 6.27        | µs   | FIC `+` is optimized      |
-| `toList`                      | -                     | 629.62      | 740.79      | µs   |                           |
-| `fromIterable`                | -                     | 739.61      | 1957.63     | µs   |                           |
+| Operation                     | Native List (mutable) | IList (FIC) | ApexList    | Unit | Notes                                     |
+| :---------------------------- | :-------------------- | :---------- | :---------- | :--- | :---------------------------------------- |
+| `add` (single element)        | 0.13                  | 1936.09     | 28.79       | µs   | ApexList much faster than FIC             |
+| `addAll`                      | 11484.12              | 1.75        | 191.95      | µs   | ApexList needs transient opt.           |
+| `lookup[]` (middle index)     | 0.01                  | 0.04        | 0.37        | µs   | ApexList slower, needs opt.             |
+| `removeAt` (middle index)     | 2421.90¹              | 728.66      | 15.78       | µs   | **ApexList significantly faster**         |
+| `removeWhere`                 | 6237.24               | 1975.20     | 2348.55     | µs   | ApexList competitive                      |
+| `iterateSum` (full traversal) | 30.69                 | 306.82      | 245.08      | µs   | ApexList competitive                      |
+| `sublist`                     | 1159.88               | 1101.49     | 30.13       | µs   | **ApexList significantly faster**         |
+| `concat(+)`                   | 3654.30               | 0.91        | 5.68        | µs   | ApexList very fast (FIC exceptionally so) |
+| `toList`                      | -                     | 693.84      | 717.38      | µs   | ApexList competitive                      |
+| `fromIterable`                | -                     | 741.32      | 1794.25     | µs   | ApexList needs transient opt.           |
 
 *Footnotes:*
-¹ Native `removeAt` benchmark includes `List.of()` copy for immutability comparison.
-² `ApexList.removeAt` has known implementation issues affecting stability/performance under certain conditions.
+¹ Native mutable operations benchmarked include `List.of()` copy for immutability comparison where applicable.
 
 **Map Benchmarks (Size: 10,000)**
 
 | Operation                 | Native Map (mutable) | IMap (FIC) | ApexMap     | Unit | Notes                     |
 | :------------------------ | :------------------- | :--------- | :---------- | :--- | :------------------------ |
 | `add[]` (new key)         | 0.08                 | 0.21       | 4.02        | µs   |                           |
-| `addAll`                  | 1726.96              | 10644.58   | 29.49       | µs   |                           |
-| `lookup[]` (existing key) | 0.03                 | 0.07       | 0.23        | µs   |                           |
-| `remove` (existing key)   | 1736.55¹             | 6768.49    | 3.61        | µs   |                           |
-| `putIfAbsent`             | 1555.64¹             | 9362.17    | 8.16²       | µs   | ApexMap combines update   |
-| `update`                  | 1704.38¹             | 5926.01    | 8.16²       | µs   | ApexMap combines update   |
-| `iterateEntries` (full)   | 564.53               | 1134.99    | 2497.49     | µs   |                           |
-| `toMap`                   | -                    | 6186.24    | 8413.29     | µs   |                           |
-| `fromMap`                 | -                    | 1798.14    | 7427.65     | µs   |                           |
+| `addAll`                  | 1726.96              | 10644.58   | 29.49       | µs   | **ApexMap significantly faster**          |
+| `lookup[]` (existing key) | 0.03                 | 0.07       | 0.23        | µs   | ApexMap slower, needs opt.            |
+| `remove` (existing key)   | 1736.55¹             | 6768.49    | 3.61        | µs   | **ApexMap significantly faster**          |
+| `putIfAbsent`             | 1555.64¹             | 9362.17    | 8.16²       | µs   | ApexMap combines update, faster than FIC |
+| `update`                  | 1704.38¹             | 5926.01    | 8.16²       | µs   | ApexMap combines update, faster than FIC |
+| `iterateEntries` (full)   | 564.53               | 1134.99    | 2497.49     | µs   | ApexMap slower                            |
+| `toMap`                   | -                    | 6186.24    | 8413.29     | µs   | ApexMap slower                            |
+| `fromMap`                 | -                    | 1798.14    | 7427.65     | µs   | ApexMap slower                            |
 
 *Footnotes:*
 ¹ Native mutable operations benchmarked include `Map.of()` copy for immutability comparison where applicable (`remove`, `putIfAbsent`, `update`).
