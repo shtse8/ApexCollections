@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~10:15 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~10:21 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -27,14 +27,18 @@
             -   `toMap`: ~8191 us
             -   `fromMap`: ~8558 us (Excellent - O(N) bulk load)
             -   *Conclusion:* `containsKey` and `bitCount` optimizations did not significantly close the gap for single `add`/`lookup` vs competitors. Bulk operations remain very fast.
-        -   **ApexList:**
-            -   `add`, `removeAt`, `addAll` performance remains good.
-            -   `concat(+)` performance is **excellent** (`~6 us`).
-            -   `removeWhere` performance is acceptable (`~2500 us`).
-            -   `sublist` performance is **excellent** (`~32 us`).
-            -   `toList` performance (`~960 us`) potentially improved by switching to iterator-based implementation (Needs new benchmarks).
-            -   `fromIterable` performance (`~1760 us`) optimization attempted by modifying node constructors to avoid `sublist` copies (Needs new benchmarks).
-            -   Iteration (`iterateSum`) performance (`~260-300 us`) is acceptable.
+        -   **ApexList (Size: 10k):**
+            -   `add`: ~26.88 us
+            -   `addAll`: ~187.83 us
+            -   `lookup[]`: ~0.42 us
+            -   `removeAt`: ~16.44 us (Note: May be affected by known bug)
+            -   `removeWhere`: ~2429 us
+            -   `iterateSum`: ~243.83 us
+            -   `sublist`: ~31.63 us (Excellent)
+            -   `concat(+)`: ~6.03 us (Excellent)
+            -   `toList`: ~2179 us (Slower than previous context/FIC)
+            -   `fromIterable`: ~1821 us (Similar to previous context, slower than FIC)
+            -   *Conclusion:* `toList` performance seems to have regressed or is slower than expected. `fromIterable` optimization attempt was ineffective. Further list optimization blocked by `removeAt` bug.
 
 ## Current Focus
 

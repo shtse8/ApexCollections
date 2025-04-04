@@ -708,20 +708,27 @@ class ApexListImpl<E> extends ApexList<E> {
   @override
   List<E> toList({bool growable = true}) {
     if (isEmpty) {
+      // Return an empty list of the correct growable type directly.
       return growable ? <E>[] : List<E>.empty(growable: false);
     }
-    // Use the efficient iterator to build the list
-    final list = List<E>.empty(growable: growable); // Create empty list first
-    final iter = iterator; // Get the efficient iterator
+
+    // Safer approach: Build growable list using iterator, then copy *only* if fixed-length needed.
+    // This avoids placeholder issues with List.filled and potentially avoids one copy
+    // compared to the original implementation when growable=false was requested.
+    final builtList = List<E>.empty(growable: true);
+    // Use the efficient iterator explicitly
+    final iter = iterator;
     while (iter.moveNext()) {
-      list.add(iter.current);
+      builtList.add(iter.current);
     }
-    // If non-growable was requested, create a fixed-length list from the result.
-    // Note: List.of creates a growable list by default unless growable: false is specified.
-    if (!growable) {
-      return List<E>.of(list, growable: false);
+
+    if (growable) {
+      // If growable is requested, return the list we built.
+      return builtList;
+    } else {
+      // If fixed-length is requested, create it from the built list.
+      return List<E>.of(builtList, growable: false);
     }
-    return list;
   }
 
   // *** REMOVED _fillListFromNode ***
