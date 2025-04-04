@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~10:09 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~10:13 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -11,6 +11,7 @@
         -   Refactored `ChampInternalNode` in `champ_node.dart` to separate transient/immutable logic paths.
         -   Extracted `ChampTrieIterator` from `ApexMapImpl` into `champ_iterator.dart`.
         -   Optimized `ApexMapImpl.containsKey` by adding dedicated `ChampNode.containsKey` method.
+        -   Optimized `bitCount` helper function in `champ_node.dart` using SWAR algorithm.
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
@@ -42,7 +43,8 @@
 4.  **(Lower Priority / Blocked by #2)** **Benchmark:** Re-run benchmarks for `ApexMap.fromMap`, `ApexList.toList`, and `ApexList.fromIterable` once list implementation is stable.
 5.  **(Lower Priority)** **Investigate `ApexMap` `add`/`lookup`:** Explore further potential micro-optimizations.
 6.  **(Lower Priority / Blocked by #2)** **Benchmark `containsKey`:** Verify performance impact of the dedicated `containsKey` implementation.
-7.  **Continue Documentation:** Update API docs based on refactoring and fixes.
+7.  **(Lower Priority / Blocked by #2)** **Benchmark `bitCount`:** Verify performance impact of the optimized `bitCount` function (affects `add`/`get`/`remove`/etc.).
+8.  **Continue Documentation:** Update API docs based on refactoring and fixes.
 
 ## Open Questions / Decisions
 

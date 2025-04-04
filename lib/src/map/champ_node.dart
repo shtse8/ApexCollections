@@ -30,14 +30,16 @@ const int kMaxDepth = 7; // ceil(32 / 5) - Max depth based on 32-bit hash
 /// Counts the number of set bits (1s) in an integer's binary representation.
 /// Also known as the Hamming weight or population count (popcount).
 /// Used for calculating indices within the node's content array based on bitmaps.
-int bitCount(int n) {
-  // Simple bit count implementation (can be optimized if needed)
-  int count = 0;
-  while (n > 0) {
-    n &= (n - 1); // Clear the least significant bit set
-    count++;
-  }
-  return count;
+int bitCount(int i) {
+  // Optimized bit count (popcount/Hamming weight) using SWAR for 32 bits.
+  // Assumes input 'i' relevant bits fit within 32 (true for dataMap/nodeMap).
+  i = i & 0xFFFFFFFF; // Ensure we operate on lower 32 bits
+  i = i - ((i >> 1) & 0x55555555);
+  i = (i & 0x33333333) + ((i >> 2) & 0x33333333);
+  i = (i + (i >> 4)) & 0x0F0F0F0F;
+  i = i + (i >> 8);
+  i = i + (i >> 16);
+  return i & 0x3F; // Mask to get final count (0-32)
 }
 
 /// Extracts the relevant fragment (portion) of the [hash] code for a given [shift] level.
