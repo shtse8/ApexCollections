@@ -31,20 +31,35 @@ This library is currently under **active development**.
     *   Performance benchmarking and optimization.
     *   Improving documentation.
 
-## Performance (Baseline Comparison)
+## Performance (Preliminary Results)
 
-Initial benchmarks (comparing native Dart collections and `fast_immutable_collections` (FIC) with 10,000 elements) provide a baseline for `ApexCollections` goals.
+**Important Note:** The following results for `ApexCollections` are preliminary, based on benchmarks run during development. Some optimizations have been made since, and the `ApexList` implementation has known issues affecting some operations. These numbers are subject to change and require re-benchmarking once the library stabilizes.
 
-**Key Observations (vs. FIC):**
+**Baseline Comparison (Native vs. FIC):**
 
-*   **Lookups (`[]`):** Both native and FIC are very fast. `ApexCollections` aims to match this.
-*   **Adds:** Native mutable adds are fastest. FIC adds involve overhead. `ApexCollections` aims for competitive immutable add performance.
-*   **Removals:** Performance varies. `ApexCollections` aims for efficient immutable removals.
-*   **Iteration:** Native iteration is generally faster. `ApexCollections` aims for efficient iteration.
+Initial benchmarks (comparing native Dart collections and `fast_immutable_collections` (FIC) with 10,000 elements) provide context:
+*   **Lookups (`[]`):** Native and FIC are very fast.
+*   **Adds:** Native mutable adds are fastest. FIC adds involve overhead.
+*   **Removals:** Performance varies (native often involves full copies in benchmarks).
+*   **Iteration:** Native iteration is generally faster.
 
-*(Note: These are baseline results. Detailed benchmarks comparing ApexCollections against native and FIC are in progress and will be added once the library stabilizes. See the `benchmark/` directory for testing code.)*
+**ApexCollections Preliminary Findings (vs. Baseline):**
 
+*   **ApexMap:**
+    *   Bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), `toMap`: Excellent performance observed.
+    *   `fromMap`: Significantly improved with O(N) bulk loading (needs re-benchmarking).
+    *   Single `add`/`lookup`: Acceptable, but potentially slower than competitors (investigation needed).
+*   **ApexList:**
+    *   `add`, `addAll`: Good performance observed.
+    *   `removeAt`: Good performance observed (but underlying logic has known issues).
+    *   `concat(+)`: Excellent performance (~6 µs).
+    *   `sublist`: Excellent performance (~32 µs).
+    *   `removeWhere`: Acceptable performance (~2500 µs).
+    *   Iteration (`iterateSum`): Acceptable performance (~260-300 µs).
+    *   `toList`: Potentially improved via iterators (~960 µs before, needs re-benchmarking).
+    *   `fromIterable`: Optimization attempted (~1760 µs before, needs re-benchmarking).
 
+*(See the `benchmark/` directory for testing code. Full, updated benchmark results comparing ApexCollections against native and FIC will be added once the library stabilizes.)*
 ## Installation
 
 This package is not yet published on `pub.dev`. Once published, add it to your `pubspec.yaml`:
