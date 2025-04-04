@@ -145,6 +145,15 @@ abstract class ChampNode<K, V> {
     TransientOwner? owner,
   });
 
+  /// Checks if the [key] exists within the subtree rooted at this node.
+  ///
+  /// - [key]: The key to check for.
+  /// - [hash]: The full hash code of the [key].
+  /// - [shift]: The current bit shift level.
+  ///
+  /// Returns `true` if the key exists, `false` otherwise.
+  bool containsKey(K key, int hash, int shift);
+
   /// Returns an immutable version of this node.
   ///
   /// If the node is transient and owned by the provided [owner], it recursively
@@ -191,6 +200,9 @@ class ChampEmptyNode<K, V> extends ChampNode<K, V> {
 
   @override
   V? get(K key, int hash, int shift) => null;
+
+  @override
+  bool containsKey(K key, int hash, int shift) => false;
 
   @override
   ChampAddResult<K, V> add(
@@ -259,6 +271,12 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
   V? get(K key, int hash, int shift) {
     // Check if the requested key matches the stored key.
     return (key == dataKey) ? dataValue : null;
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    // Check if the requested key matches the stored key.
+    return key == dataKey;
   }
 
   @override
@@ -376,6 +394,20 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
       }
     }
     return null; // Hash doesn't match or key not found in list
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    // Only search if the hash matches the collision hash
+    if (hash == collisionHash) {
+      // Linear search through the colliding entries
+      for (final entry in entries) {
+        if (entry.key == key) {
+          return true;
+        }
+      }
+    }
+    return false; // Hash doesn't match or key not found in list
   }
 
   @override
@@ -726,6 +758,29 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
 
     return null; // Not found in this branch
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      // Check data entries first
+      final dataIndex = dataIndexFromFragment(frag);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      // Check if the key matches
+      return content[payloadIndex] == key;
+    } else if ((nodeMap & bitpos) != 0) {
+      // Check sub-nodes
+      final nodeIndex = nodeIndexFromFragment(frag);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final subNode = content[contentIdx] as ChampNode<K, V>;
+      // Recursively search in the sub-node
+      return subNode.containsKey(key, hash, shift + kBitPartitionSize);
+    }
+
+    return false; // Not found in this branch
   }
 
   @override

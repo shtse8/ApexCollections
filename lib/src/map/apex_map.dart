@@ -191,7 +191,8 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   bool containsKey(K key) {
     if (isEmpty) return false; // Optimization for empty map
-    return this[key] != null; // Simple check, relies on efficient operator []
+    // Delegate to the root node's containsKey method
+    return _root.containsKey(key, key.hashCode, 0);
   }
 
   @override
