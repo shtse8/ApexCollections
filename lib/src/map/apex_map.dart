@@ -153,36 +153,37 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     );
 
     // 3. Second Pass: Populate the final content list directly
-    int dataPayloadIndex = 0; // Tracks current index for data [k, v, k, v...]
-    // Nodes are placed in reverse order at the end. Start index from the end.
-    int nodeContentIndexRev =
+    // 3. Second Pass (Optimized): Populate finalContent directly using running indices
+    int currentDataIndex = 0; // Tracks index within the conceptual data array
+    int currentNodeIndex =
         0; // Tracks index within the conceptual reversed node array
 
     for (int frag = 0; frag < partitions.length; frag++) {
-      final partition = partitions[frag];
-      if (partition.isEmpty) continue;
-
       final bitpos = 1 << frag;
+
       if ((dataMap & bitpos) != 0) {
-        // Single entry -> Place directly into data section (at the beginning)
-        final entry = partition.first;
-        finalContent[dataPayloadIndex++] = entry.key;
-        finalContent[dataPayloadIndex++] = entry.value;
-      } else {
-        // Multiple entries -> Recursively build sub-node
+        // Place data entry
+        final payloadIndex = currentDataIndex * 2;
+        final entry = partitions[frag].first;
+        finalContent[payloadIndex] = entry.key;
+        finalContent[payloadIndex + 1] = entry.value;
+        currentDataIndex++;
+      } else if ((nodeMap & bitpos) != 0) {
+        // Build and place sub-node
+        final actualNodeIndex = finalContent.length - 1 - currentNodeIndex;
+        final partition = partitions[frag];
         final subNode = _buildNode(
           partition,
           shift + champ.kBitPartitionSize,
           owner,
         );
-        // Calculate the actual index from the end of the list
-        final actualIndex = finalContent.length - 1 - nodeContentIndexRev;
-        finalContent[actualIndex] = subNode;
-        nodeContentIndexRev++; // Increment the reversed index counter
+        finalContent[actualNodeIndex] = subNode;
+        currentNodeIndex++;
       }
+      // If neither dataMap nor nodeMap has the bit, partitions[frag] must be empty.
     }
-    assert(dataPayloadIndex == dataCount * 2);
-    assert(nodeContentIndexRev == nodeCount);
+    assert(currentDataIndex == dataCount);
+    assert(currentNodeIndex == nodeCount);
 
     // 4. Create and return the correct transient node type based on count
     final childCount = dataCount + nodeCount;
