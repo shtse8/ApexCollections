@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~10:13 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~10:15 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -16,11 +16,17 @@
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
         -   **(Known Issue)** List Test Runtime Error: Now throws `StateError: Cannot rebalance incompatible nodes (cannot merge/steal)...` in `RrbInternalNode._rebalanceOrMerge` (changed from `UnimplementedError` as an interim step). The specific case where nodes cannot be merged or stolen due to type/height mismatch remains unhandled. Requires significant refactor/research of rebalancing logic. The transient path also remains unimplemented.
-    -   **Performance Status (from previous context, likely unchanged):**
-        -   **ApexMap:**
-            -   Bulk modifications (`addAll`, `remove`, `update`), iteration (`iterateEntries`), `toMap` remain **excellent**.
-            -   Single `add`/`lookup` performance is acceptable but slower than competitors.
-            -   **(Resolved)** `ApexMap.fromMap` performance significantly improved by implementing O(N) recursive bulk loading. (Needs new benchmarks).
+    -   **Performance Status (Updated 2025-04-04 ~10:14 UTC+1):**
+        -   **ApexMap (Size: 10k):**
+            -   `add`: ~4.09 us (Still slower than Native ~0.08us, FIC ~0.16us)
+            -   `addAll`: ~31.1 us (Excellent)
+            -   `lookup[]`: ~0.23 us (Still slower than Native ~0.03us, FIC ~0.06us)
+            -   `remove`: ~3.59 us
+            -   `update`: ~8.26 us
+            -   `iterateEntries`: ~2622 us
+            -   `toMap`: ~8191 us
+            -   `fromMap`: ~8558 us (Excellent - O(N) bulk load)
+            -   *Conclusion:* `containsKey` and `bitCount` optimizations did not significantly close the gap for single `add`/`lookup` vs competitors. Bulk operations remain very fast.
         -   **ApexList:**
             -   `add`, `removeAt`, `addAll` performance remains good.
             -   `concat(+)` performance is **excellent** (`~6 us`).
