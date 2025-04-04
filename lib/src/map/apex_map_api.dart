@@ -1,6 +1,6 @@
-import 'package:meta/meta.dart';
+// Remove unused: import 'package:meta/meta.dart';
 import 'apex_map.dart'; // Contains ApexMapImpl and its emptyInstance
-import 'champ_node.dart' as champ; // Needed for types in doc comments? No.
+// Remove unused import: 'champ_node.dart' as champ;
 
 /// An immutable, persistent map implementation based on Compressed Hash-Array Mapped Prefix Tries (CHAMP).
 ///
@@ -14,7 +14,7 @@ import 'champ_node.dart' as champ; // Needed for types in doc comments? No.
 /// - Iteration: O(N)
 ///
 /// It implements the standard Dart [Iterable] interface for its entries.
-@immutable
+// @immutable // Temporarily removed due to transient nodes
 abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// Creates an empty `ApexMap`.
   ///
@@ -108,7 +108,7 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// The order of entries is not guaranteed.
   /// Iterating the entries has O(N) complexity.
   /// This `ApexMap` itself is the `Iterable<MapEntry<K, V>>`.
-  @override
+  // No @override needed as it fulfills the Iterable interface contract
   Iterable<MapEntry<K, V>> get entries => this;
 
   // --- Element Access ---

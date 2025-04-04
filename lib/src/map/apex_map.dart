@@ -1,12 +1,12 @@
-import 'package:collection/collection.dart'
-    as collection; // For equality, mixins, bitCount
-import 'champ_node.dart' as champ;
-import 'champ_iterator.dart';
-import 'champ_node.dart' as champ;
-import 'champ_iterator.dart';
+// Remove unused: import 'package:collection/collection.dart'
+//     as collection; // For equality, mixins, bitCount
+// Keep apex_map_api import
 import 'apex_map_api.dart';
+// Keep one champ_node import (exports everything else) with prefix
 import 'champ_node.dart' as champ; // Use prefix for clarity and constants
+// Keep one champ_iterator import
 import 'champ_iterator.dart'; // Import the extracted iterator
+// Remove duplicate imports
 
 /// Concrete implementation of [ApexMap] using a CHAMP Trie.
 class ApexMapImpl<K, V> extends ApexMap<K, V> {
@@ -154,8 +154,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
     // 3. Second Pass: Populate the final content list directly
     int dataPayloadIndex = 0; // Tracks current index for data [k, v, k, v...]
-    int nodeContentIndex =
-        dataCount * 2; // Tracks current index for nodes [...]
+    // Nodes are placed in reverse order at the end. Start index from the end.
+    int nodeContentIndexRev =
+        0; // Tracks index within the conceptual reversed node array
 
     for (int frag = 0; frag < partitions.length; frag++) {
       final partition = partitions[frag];
@@ -163,20 +164,25 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
 
       final bitpos = 1 << frag;
       if ((dataMap & bitpos) != 0) {
-        // Single entry -> Place directly into data section
+        // Single entry -> Place directly into data section (at the beginning)
         final entry = partition.first;
         finalContent[dataPayloadIndex++] = entry.key;
         finalContent[dataPayloadIndex++] = entry.value;
       } else {
-        // Multiple entries -> Recursively build sub-node and place in node section
+        // Multiple entries -> Recursively build sub-node
         final subNode = _buildNode(
           partition,
           shift + champ.kBitPartitionSize,
           owner,
         );
-        finalContent[nodeContentIndex++] = subNode;
+        // Calculate the actual index from the end of the list
+        final actualIndex = finalContent.length - 1 - nodeContentIndexRev;
+        finalContent[actualIndex] = subNode;
+        nodeContentIndexRev++; // Increment the reversed index counter
       }
     }
+    assert(dataPayloadIndex == dataCount * 2);
+    assert(nodeContentIndexRev == nodeCount);
 
     // 4. Create and return the correct transient node type based on count
     final childCount = dataCount + nodeCount;
@@ -308,11 +314,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Need to handle different root types for _ensureMutable
     champ.ChampNode<K, V> mutableRoot;
     if (_root is champ.ChampBitmapNode<K, V>) {
-      mutableRoot = (_root as champ.ChampBitmapNode<K, V>).ensureMutable(owner);
+      mutableRoot = _root.ensureMutable(owner);
     } else if (_root is champ.ChampCollisionNode<K, V>) {
-      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
-        owner,
-      );
+      mutableRoot = _root.ensureMutable(owner);
     } else {
       // Empty and Data nodes are immutable, start transient op from them
       mutableRoot = _root;
@@ -434,11 +438,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Get a mutable version of the current root node
     champ.ChampNode<K, V> mutableRoot;
     if (_root is champ.ChampBitmapNode<K, V>) {
-      mutableRoot = (_root as champ.ChampBitmapNode<K, V>).ensureMutable(owner);
+      mutableRoot = _root.ensureMutable(owner);
     } else if (_root is champ.ChampCollisionNode<K, V>) {
-      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
-        owner,
-      );
+      mutableRoot = _root.ensureMutable(owner);
     } else {
       // Empty and Data nodes are immutable, start transient op from them
       mutableRoot = _root;
@@ -811,11 +813,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Get a mutable version of the current root node
     champ.ChampNode<K, V> mutableRoot;
     if (_root is champ.ChampBitmapNode<K, V>) {
-      mutableRoot = (_root as champ.ChampBitmapNode<K, V>).ensureMutable(owner);
+      mutableRoot = _root.ensureMutable(owner);
     } else if (_root is champ.ChampCollisionNode<K, V>) {
-      mutableRoot = (_root as champ.ChampCollisionNode<K, V>).ensureMutable(
-        owner,
-      );
+      mutableRoot = _root.ensureMutable(owner);
     } else {
       // Empty and Data nodes are immutable, start transient op from them
       mutableRoot = _root;

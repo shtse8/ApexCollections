@@ -78,9 +78,10 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
           final bitpos = 1 << i;
           if ((nodeMap & bitpos) != 0) {
             final nodeIndex = champ.nodeIndexFromFragment(i, nodeMap);
+            // Use the updated contentIndexFromNodeIndex which takes list length
             final contentIdx = champ.contentIndexFromNodeIndex(
               nodeIndex,
-              dataMap,
+              list.length, // Pass list length instead of dataMap
             );
             // Check bounds before accessing list
             if (contentIdx >= 0 && contentIdx < list.length) {
