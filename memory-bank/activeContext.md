@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-04 ~19:30 UTC+1)
+## Current Status (Timestamp: 2025-04-04 ~21:50 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -17,42 +17,44 @@
         -   Attempted optimization of `RrbInternalNode.fromRange` (Reverted - worsened performance).
         -   Attempted optimization of `ChampInternalNode` immutable helpers using list spreads (Reverted - worsened single-element performance).
         -   **Fixed `champ_node.dart` structural errors (missing `ChampArrayNode` definition, misplaced methods).**
+        -   **Refactored `ChampTrieIterator` logic to fix test failures.**
     -   **Testing Issues:**
         -   **(Resolved)** File writing tools seem stable.
         -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All `apex_map_test.dart` tests pass.
         -   **(Resolved)** List Test Runtime Error: The `StateError: Cannot rebalance incompatible nodes...` in `RrbInternalNode._rebalanceOrMerge` has been addressed by implementing a plan-based rebalancing strategy (`_createRebalancePlan`, `_executeRebalancePlan`) for the immutable path. All `apex_list_test.dart` tests now pass.
         -   **(Resolved)** The transient path for `_rebalanceOrMerge` (plan-based case) now uses `_executeTransientRebalancePlan` to mutate nodes in place.
         -   **(Resolved)** Persistent Dart Analyzer errors related to `ChampArrayNode` resolved by fixing `champ_node.dart` structure, clearing `.dart_tool`, and using `git stash pop`.
-    -   **Performance Status (Updated 2025-04-04 ~19:30 UTC+1 - After fixing `champ_node.dart`):**
+        -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass.**
+    -   **Performance Status (Updated 2025-04-04 ~21:50 UTC+1 - After fixing iterator & re-running benchmarks):**
         -   **ApexMap (Size: 10k):**
-            -   `add`: ~4.08 us (Improved, but slower than Native/FIC)
-            -   `addAll`: ~31.70 us (Excellent - Much faster than Native/FIC)
-            -   `lookup[]`: ~0.24 us (Stable, slower than Native/FIC)
-            -   `remove`: ~3.73 us (Stable, much faster than FIC)
-            -   `update`: ~8.47 us (Slightly improved, faster than FIC)
-            -   `iterateEntries`: **~24.87 us** (**Massive Improvement!** Faster than Native/FIC)
-            -   `toMap`: **~51.84 us** (**Massive Improvement!** Faster than Native/FIC)
-            -   `fromMap`: ~8333.64 us (Slightly slower, slower than FIC)
-            -   *Conclusion:* Fixing `champ_node.dart` structure dramatically improved iteration and `toMap` performance, likely due to correct iterator/node interaction. `add` also improved. `addAll` remains excellent. Single-element lookups/removals stable. `fromMap` slightly regressed. Further optimization deferred.
-        -   **ApexList (Size: 10k):** (Post `champ_node.dart` fix)
-            -   `add`: ~24.12 us (Slightly improved, much faster than FIC)
-            -   `addAll`: ~29.38 us (Slightly improved, Excellent)
+            -   `add`: ~4.16 us (Stable, slower than Native/FIC)
+            -   `addAll`: ~30.89 us (Stable, Excellent)
+            -   `lookup[]`: ~0.23 us (Stable, slower than Native/FIC)
+            -   `remove`: ~3.80 us (Stable, much faster than FIC)
+            -   `update`: ~8.55 us (Stable, faster than FIC)
+            -   `iterateEntries`: ~2966.55 us (Slow - Previous fast result likely due to incorrect iteration logic before fix)
+            -   `toMap`: ~8565.48 us (Slow - Previous fast result likely due to incorrect iteration logic before fix)
+            -   `fromMap`: ~8453.27 us (Stable, slower than FIC)
+            -   *Conclusion:* After fixing the iterator logic to ensure correctness (all tests pass), the iteration and `toMap` performance returned to slower levels, similar to before the `champ_node.dart` structural fixes. This confirms the previous "massive improvement" was an artifact of incorrect iteration. `addAll` remains excellent. Single-element operations are stable. Further optimization for iteration, `toMap`, and single-element ops remains deferred.
+        -   **ApexList (Size: 10k):** (After iterator fix & re-run)
+            -   `add`: ~26.74 us (Stable, much faster than FIC)
+            -   `addAll`: ~32.34 us (Stable, Excellent)
             -   `lookup[]`: ~0.15 us (Stable, Excellent)
-            -   `removeAt`: ~18.86 us (Stable, Excellent)
-            -   `removeWhere`: ~2753.31 us (Stable, Competitive)
-            -   `iterateSum`: ~261.48 us (Stable, Competitive)
-            -   `sublist`: ~5.65 us (Slightly improved, Excellent)
-            -   `concat(+)`: ~7.04 us (Slightly improved, Very good)
-            -   `toList`: ~716.06 us (Slightly improved, Competitive)
-            -   `fromIterable`: ~2858.17 us (Slightly improved, slower than FIC but accepted trade-off)
-            -   *Conclusion:* Performance remains stable and excellent for key operations after fixing unrelated map node issues. Minor improvements observed across several operations. Recursive concatenation strategy for `fromIterable` continues to provide good lookup/sublist performance.
+            -   `removeAt`: ~20.75 us (Stable, Excellent)
+            -   `removeWhere`: ~2985.37 us (Stable, Competitive)
+            -   `iterateSum`: ~271.81 us (Stable, Competitive)
+            -   `sublist`: ~6.13 us (Stable, Excellent)
+            -   `concat(+)`: ~7.82 us (Stable, Very good)
+            -   `toList`: ~772.02 us (Stable, Competitive)
+            -   `fromIterable`: ~3144.22 us (Stable, slower than FIC but accepted trade-off)
+            -   *Conclusion:* Performance remains stable and largely consistent with previous runs after map iterator fixes. Minor fluctuations likely due to benchmark noise. Key operations maintain excellent performance relative to competitors.
 
 ## Current Focus
 
 -   **ApexList:** Core logic stable.
 -   **ApexMap:** Fixed structural errors in `champ_node.dart`. Updated Dartdocs.
--   **Testing:** All tests pass.
--   **Benchmarking:** Re-ran benchmarks after fixing `champ_node.dart`. Confirmed `ApexList` stability and observed significant improvements in `ApexMap` iteration/`toMap`.
+-   **Testing:** Refactored `ChampTrieIterator` to fix map test failures. **All tests now pass.**
+-   **Benchmarking:** Re-ran benchmarks after fixing `ChampTrieIterator`. Confirmed `ApexList` stability. Confirmed previous `ApexMap` iteration/`toMap` speedup was due to incorrect iterator logic; current (slower) results reflect correct behavior.
 -   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap` based on latest changes and benchmarks.
 
 ## Next Immediate Steps
@@ -62,8 +64,11 @@
 3.  **(DONE)** Update `ApexList` Dartdocs.
 4.  **(DONE)** Update `ApexMap` Dartdocs.
 5.  **(DONE)** Re-run benchmarks for `ApexMap` and `ApexList`.
-6.  **Update Memory Bank:** Reflect latest fixes, benchmark results, and documentation updates. (Current Step)
-7.  **Phase 5:** Begin detailed documentation (README updates, examples, potentially GitHub Pages setup).
+6.  **(DONE)** Refactor `ChampTrieIterator` and verify all tests pass.
+7.  **(DONE)** Re-run benchmarks again to confirm results.
+8.  **Update Memory Bank:** Reflect latest benchmark results and conclusions. (Current Step)
+9.  **Phase 5:** Begin detailed documentation (README updates, examples, potentially GitHub Pages setup).
+8.  **Phase 5:** Begin detailed documentation (README updates, examples, potentially GitHub Pages setup).
 
 ## Open Questions / Decisions
 

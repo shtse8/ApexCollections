@@ -896,7 +896,7 @@ class ChampSparseNode<K, V> extends ChampBitmapNode<K, V> {
     return this;
   }
 
-  // --- Immutable Helper (SparseNode - adapted from ArrayNode) ---
+  // --- Immutable Helper (SparseNode) ---
 
   /// Creates a new node replacing a data entry with a sub-node immutably.
   /// Handles potential transition to ArrayNode.
@@ -1612,7 +1612,7 @@ class ChampSparseNode<K, V> extends ChampBitmapNode<K, V> {
     if (identical(updateResult.node, subNode))
       return (node: this, sizeChanged: updateResult.sizeChanged);
 
-    // Create new children list with updated sub-node
+    // Create new node with updated sub-node
     final newChildren = List<Object?>.of(children);
     newChildren[contentIdx] = updateResult.node;
     // Count doesn't change, stays SparseNode
@@ -1853,12 +1853,14 @@ class ChampSparseNode<K, V> extends ChampBitmapNode<K, V> {
     if (isTransient(owner)) {
       final nodeCount = bitCount(nodeMap);
       final dataSlots = bitCount(dataMap) * 2;
+      // Freeze child nodes recursively
       for (int i = 0; i < nodeCount; i++) {
         final nodeIndex = dataSlots + i;
-        final subNode = children[nodeIndex] as ChampNode<K, V>;
+        final subNode =
+            children[nodeIndex] as ChampNode<K, V>; // Use 'children'
         children[nodeIndex] = subNode.freeze(owner); // Freeze recursively
       }
-      this._owner = null;
+      this._owner = null; // Clear owner
       this.children = List.unmodifiable(children); // Make list unmodifiable
       return this;
     }
@@ -2332,16 +2334,17 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
     if (isTransient(owner)) {
       final nodeCount = bitCount(nodeMap);
       final dataSlots = bitCount(dataMap) * 2;
+      // Freeze child nodes recursively
       for (int i = 0; i < nodeCount; i++) {
         final nodeIndex = dataSlots + i;
         final subNode = content[nodeIndex] as ChampNode<K, V>; // Use 'content'
         content[nodeIndex] = subNode.freeze(owner); // Freeze recursively
       }
-      this._owner = null;
+      this._owner = null; // Clear owner
       this.content = List.unmodifiable(content); // Make list unmodifiable
       return this;
     }
-    return this;
+    return this; // Already immutable or not owned
   }
 
   @override
@@ -2349,8 +2352,8 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
     if (isTransient(owner)) {
       return this;
     }
+    // Create a mutable copy with the new owner
     return ChampArrayNode<K, V>(
-      // Return ArrayNode
       dataMap,
       nodeMap,
       List.of(content, growable: true), // Create mutable copy of 'content'

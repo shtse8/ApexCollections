@@ -1,184 +1,117 @@
 /// Defines the iterator for traversing CHAMP Tries used by [ApexMap].
 library;
 
+import 'dart:collection'; // For Queue
 import 'champ_node.dart' as champ;
 
-import 'champ_node.dart' as champ;
-
-/// Efficient iterator for traversing the CHAMP Trie.
+/// Efficient iterator for traversing the CHAMP Trie using a simplified stack approach.
 class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
-  // Stacks to manage the traversal state
-  final List<champ.ChampNode<K, V>> _nodeStack = [];
-  final List<int> _bitposStack =
-      []; // Stores the next bit position (1 << i) to check
-  final List<Iterator<MapEntry<K, V>>> _collisionIteratorStack =
-      []; // For CollisionNodes
+  // Use a Queue as a stack for easier adding/removing from the front (LIFO)
+  // Store nodes or entries directly.
+  final Queue<Object> _stack = Queue<Object>();
 
-  // Store key/value separately, create MapEntry in 'current' getter
   K? _currentKey;
   V? _currentValue;
-  bool _hasCurrent = false; // Track if key/value are valid
-  bool _yieldSingleDataNodeRoot = false; // Flag for single data node root
+  bool _hasCurrent = false;
 
   ChampTrieIterator(champ.ChampNode<K, V> rootNode) {
-    if (rootNode is champ.ChampDataNode<K, V>) {
-      // Handle root being a single data node: Set initial key/value
-      _currentKey = rootNode.dataKey;
-      _currentValue = rootNode.dataValue;
-      _hasCurrent = true; // Mark as having a valid current value initially
-      _yieldSingleDataNodeRoot = true;
-    } else if (!rootNode.isEmptyNode) {
-      // Otherwise, push internal/collision nodes as before
-      _pushNode(rootNode);
+    if (!rootNode.isEmptyNode) {
+      _stack.addFirst(rootNode); // Add the root node to start traversal
     }
-  }
-
-  void _pushNode(champ.ChampNode<K, V> node) {
-    if (node is champ.ChampCollisionNode<K, V>) {
-      _nodeStack.add(node);
-      _bitposStack.add(0); // Not used for collision nodes
-      _collisionIteratorStack.add(node.entries.iterator);
-    } else if (node is champ.ChampBitmapNode<K, V>) {
-      _nodeStack.add(node);
-      _bitposStack.add(1); // Start checking from the first bit position
-    }
-    // ChampEmptyNode and ChampDataNode are not pushed directly onto the main stack
-    // DataNode is handled when found within an InternalNode
   }
 
   @override
   MapEntry<K, V> get current {
     if (!_hasCurrent) {
-      // Adhere to Iterator contract
       throw StateError('No current element');
     }
-    // Create MapEntry on demand
     return MapEntry(_currentKey as K, _currentValue as V);
   }
 
   @override
   bool moveNext() {
-    // Check flag first for the single data node root case
-    if (_yieldSingleDataNodeRoot) {
-      _yieldSingleDataNodeRoot = false; // Consume the flag
-      // _hasCurrent is already true from constructor
-      return true; // Return true for the first call
-    }
-    // If the flag was already consumed, or wasn't set, invalidate current before trying to find next
-    _hasCurrent = false;
+    _hasCurrent = false; // Invalidate current before finding next
 
-    // Proceed with stack-based iteration
-    while (_nodeStack.isNotEmpty) {
-      final node = _nodeStack.last;
-      final bitpos = _bitposStack.last;
+    while (_stack.isNotEmpty) {
+      final element = _stack.removeFirst(); // Pop from stack
 
-      if (node is champ.ChampCollisionNode<K, V>) {
-        final collisionIterator = _collisionIteratorStack.last;
-        if (collisionIterator.moveNext()) {
-          final entry = collisionIterator.current;
-          _currentKey = entry.key;
-          _currentValue = entry.value;
-          _hasCurrent = true;
-          return true;
-        } else {
-          // Finished with this collision node
-          _nodeStack.removeLast();
-          _bitposStack.removeLast();
-          _collisionIteratorStack.removeLast();
-          continue; // Try the next node on the stack
+      if (element is champ.ChampDataNode<K, V>) {
+        // Found a data node directly
+        _currentKey = element.dataKey;
+        _currentValue = element.dataValue;
+        _hasCurrent = true;
+        return true;
+      } else if (element is MapEntry<K, V>) {
+        // Found an entry from a CollisionNode
+        _currentKey = element.key;
+        _currentValue = element.value;
+        _hasCurrent = true;
+        return true;
+      } else if (element is champ.ChampCollisionNode<K, V>) {
+        // Push all entries from the collision node onto the stack (in reverse order for correct iteration)
+        for (int i = element.entries.length - 1; i >= 0; i--) {
+          _stack.addFirst(element.entries[i]);
         }
-      }
-
-      if (node is champ.ChampBitmapNode<K, V>) {
-        final dataMap = node.dataMap;
-        final nodeMap = node.nodeMap;
-        // Access the correct list based on the concrete type
+        // Continue the loop to process the first entry pushed
+        continue;
+      } else if (element is champ.ChampBitmapNode<K, V>) {
+        // Push children (data and nodes) onto the stack in reverse order of their bit position
+        final dataMap = element.dataMap;
+        final nodeMap = element.nodeMap;
         final List<Object?> list;
-        if (node is champ.ChampArrayNode<K, V>) {
-          list = node.content;
-        } else if (node is champ.ChampSparseNode<K, V>) {
-          list = node.children;
+        if (element is champ.ChampArrayNode<K, V>) {
+          list = element.content;
+        } else if (element is champ.ChampSparseNode<K, V>) {
+          list = element.children;
         } else {
-          // Should not happen if type check is exhaustive
           throw StateError(
-            'Unexpected ChampBitmapNode subtype: ${node.runtimeType}',
+            'Unexpected ChampBitmapNode subtype: ${element.runtimeType}',
           );
         }
-        final dataSlots =
-            champ.bitCount(dataMap) * 2; // Calculate data offset once
 
-        bool processedEntryOrNode =
-            false; // Flag to check if we processed something in the loop
-
-        // Resume checking bit positions from where we left off
+        // Iterate through possible bit positions in reverse order (31 down to 0)
         for (
-          int currentBitpos = bitpos; // Start from saved bitpos
-          // Loop until shift overflows or exceeds max bits for the level
-          currentBitpos != 0 && currentBitpos <= (1 << champ.kBitPartitionSize);
-          currentBitpos <<= 1 // Move to next bit
+          int i = champ.kBitPartitionSize * champ.kMaxDepth - 1;
+          i >= 0;
+          i--
         ) {
-          if ((dataMap & currentBitpos) != 0) {
-            // Found a data entry
-            final dataIndex = champ.bitCount(dataMap & (currentBitpos - 1));
-            final payloadIndex = dataIndex * 2;
-            _currentKey = list[payloadIndex] as K; // Use 'list'
-            _currentValue = list[payloadIndex + 1] as V; // Use 'list'
-            _hasCurrent = true;
-            // Update stack to resume after this bitpos on next call
-            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
-            processedEntryOrNode = true;
-            return true; // Return the found data entry
-          }
-          if ((nodeMap & currentBitpos) != 0) {
-            // Found a sub-node, push it onto the stack and descend
-            final nodeLocalIndex = champ.bitCount(
-              nodeMap & (currentBitpos - 1),
+          final bitpos = 1 << i;
+          if ((nodeMap & bitpos) != 0) {
+            final nodeIndex = champ.nodeIndexFromFragment(i, nodeMap);
+            final contentIdx = champ.contentIndexFromNodeIndex(
+              nodeIndex,
+              dataMap,
             );
-            final nodeIndex =
-                dataSlots + nodeLocalIndex; // Use pre-calculated dataSlots
-
             // Check bounds before accessing list
-            if (nodeIndex < 0 || nodeIndex >= list.length) {
-              // Use 'list'
-              // This should ideally not happen with correct node logic, but handle defensively.
-              // Consider logging an error or throwing if this occurs in production.
-              _nodeStack.removeLast();
-              _bitposStack.removeLast();
-              processedEntryOrNode =
-                  true; // Mark as processed to avoid double pop
-              break; // Exit inner loop, continue outer loop
+            if (contentIdx >= 0 && contentIdx < list.length) {
+              _stack.addFirst(list[contentIdx] as champ.ChampNode<K, V>);
+            } else {
+              // Log error or handle defensively if index is out of bounds
+              print("Error: Iterator node index out of bounds.");
             }
-
-            final subNode =
-                list[nodeIndex] as champ.ChampNode<K, V>; // Use 'list'
-
-            // Update stack to resume after this bitpos in the current node later
-            _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
-            // Push the new sub-node to explore next
-            _pushNode(subNode);
-            processedEntryOrNode = true;
-            // Restart the outer loop to process the newly pushed node
-            break; // Exit inner for-loop, outer while-loop will process pushed node
           }
-        } // End for loop over bit positions
-
-        // If the inner loop completed without finding/pushing anything *new* in this iteration
-        if (!processedEntryOrNode) {
-          _nodeStack.removeLast();
-          _bitposStack.removeLast();
+          if ((dataMap & bitpos) != 0) {
+            final dataIndex = champ.dataIndexFromFragment(i, dataMap);
+            final payloadIndex = champ.contentIndexFromDataIndex(dataIndex);
+            // Check bounds before accessing list
+            if (payloadIndex >= 0 && payloadIndex + 1 < list.length) {
+              // Create a temporary MapEntry to push onto the stack
+              final key = list[payloadIndex] as K;
+              final value = list[payloadIndex + 1] as V;
+              _stack.addFirst(MapEntry(key, value));
+            } else {
+              // Log error or handle defensively if index is out of bounds
+              print("Error: Iterator data index out of bounds.");
+            }
+          }
         }
-        // Continue the outer while loop regardless
+        // Continue the loop to process the first child pushed
         continue;
-      } else {
-        // Should not happen if root wasn't empty and only Internal/Collision nodes are pushed
-        // Should not happen if root wasn't empty and only Internal/Collision nodes are pushed
-        _nodeStack.removeLast();
-        _bitposStack.removeLast();
       }
-    } // End while loop
+      // Ignore ChampEmptyNode if somehow pushed onto stack
+    }
 
-    // Stack is empty, iteration complete
-    _hasCurrent = false; // Invalidate current
+    // Stack is empty
     return false;
   }
 }
