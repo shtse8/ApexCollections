@@ -531,10 +531,10 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
     } else {
       final subNode = mergeDataEntries(
         shift + kBitPartitionSize,
-        hashOfKey(currentKey),
+        hash, // Use existing hash for currentKey
         currentKey,
         currentValue,
-        hash,
+        hash, // Hash of the new key
         key,
         value,
         owner,
@@ -625,10 +625,10 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
       // Hash collision, different keys -> create sub-node
       final subNode = mergeDataEntries(
         shift + kBitPartitionSize,
-        hashOfKey(currentKey),
+        hash, // Use existing hash for currentKey
         currentKey,
         currentValue,
-        hash,
+        hash, // Hash of the new key
         key,
         value,
         null, // Immutable merge
@@ -917,10 +917,10 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
         final currentVal = content[payloadIndex + 1] as V;
         final subNode = mergeDataEntries(
           shift + kBitPartitionSize,
-          hashOfKey(currentKey),
+          hash, // Use existing hash for currentKey
           currentKey,
           currentVal,
-          hash,
+          hash, // Hash of the new key
           key,
           newValue,
           owner,
@@ -1036,10 +1036,10 @@ class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
         final currentVal = content[payloadIndex + 1] as V;
         final subNode = mergeDataEntries(
           shift + kBitPartitionSize,
-          hashOfKey(currentKey),
+          hash, // Use existing hash for currentKey
           currentKey,
           currentVal,
-          hash,
+          hash, // Hash of the new key
           key,
           newValue,
           null, // Immutable merge
