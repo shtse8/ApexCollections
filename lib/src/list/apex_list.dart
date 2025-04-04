@@ -712,22 +712,53 @@ class ApexListImpl<E> extends ApexList<E> {
       return growable ? <E>[] : List<E>.empty(growable: false);
     }
 
-    // Safer approach: Build growable list using iterator, then copy *only* if fixed-length needed.
-    // This avoids placeholder issues with List.filled and potentially avoids one copy
-    // compared to the original implementation when growable=false was requested.
-    final builtList = List<E>.empty(growable: true);
-    // Use the efficient iterator explicitly
-    final iter = iterator;
-    while (iter.moveNext()) {
-      builtList.add(iter.current);
-    }
+    // Use pre-allocation with a recursive helper for potentially better performance.
+    // Create a nullable list first to avoid issues with non-nullable E and List.filled placeholder.
+    final list = List<E?>.filled(_length, null, growable: growable);
+    _fillListFromNode<E>(list, _root, 0); // Call the static helper
 
-    if (growable) {
-      // If growable is requested, return the list we built.
-      return builtList;
+    // Cast back to List<E>. Assumes _fillListFromNode correctly filled all slots.
+    // If E is non-nullable, any remaining nulls would cause runtime error on access,
+    // but this shouldn't happen if _length and tree structure are consistent.
+    final filledList = list.cast<E>();
+
+    // Return based on growable flag.
+    // If growable=true, the cast list is already growable.
+    // If growable=false, create a fixed-length list from the cast list.
+    return growable ? filledList : List<E>.of(filledList, growable: false);
+  }
+
+  /// Recursive helper to fill a pre-allocated list from the RRB-Tree nodes.
+  /// Returns the number of elements written by this node and its children.
+  static int _fillListFromNode<E>(
+    List<E?> targetList,
+    rrb.RrbNode<E> node,
+    int targetStartIndex,
+  ) {
+    if (node is rrb.RrbLeafNode<E>) {
+      // Base case: Leaf node
+      final elements = node.elements;
+      final count = elements.length;
+      // Directly copy elements to the target list range
+      targetList.setRange(targetStartIndex, targetStartIndex + count, elements);
+      return count;
+    } else if (node is rrb.RrbInternalNode<E>) {
+      // Recursive step: Internal node
+      int currentWriteIndex = targetStartIndex;
+      int totalWritten = 0;
+      for (final child in node.children) {
+        final elementsWritten = _fillListFromNode(
+          targetList,
+          child,
+          currentWriteIndex,
+        );
+        currentWriteIndex += elementsWritten;
+        totalWritten += elementsWritten;
+      }
+      return totalWritten;
     } else {
-      // If fixed-length is requested, create it from the built list.
-      return List<E>.of(builtList, growable: false);
+      // Empty node case (shouldn't be reached if initial isEmpty check passes)
+      return 0;
     }
   }
 

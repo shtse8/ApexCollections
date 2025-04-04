@@ -719,19 +719,24 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
   /// Calculates the index within the data portion of the [content] list
   /// corresponding to a given hash fragment [frag].
-  int dataIndexFromFragment(int frag) => bitCount(dataMap & ((1 << frag) - 1));
+  /// Requires the node's dataMap.
+  static int dataIndexFromFragment(int frag, int dataMap) =>
+      bitCount(dataMap & ((1 << frag) - 1));
 
   /// Calculates the index within the node portion of the [content] list
   /// corresponding to a given hash fragment [frag].
-  int nodeIndexFromFragment(int frag) => bitCount(nodeMap & ((1 << frag) - 1));
+  /// Requires the node's nodeMap.
+  static int nodeIndexFromFragment(int frag, int nodeMap) =>
+      bitCount(nodeMap & ((1 << frag) - 1));
 
   /// Calculates the starting index in the [content] list for a data entry,
   /// given its index within the conceptual data array ([dataIndex]).
-  int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
+  static int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
 
   /// Calculates the index in the [content] list for a child node,
   /// given its index within the conceptual node array ([nodeIndex]).
-  int contentIndexFromNodeIndex(int nodeIndex) =>
+  /// Requires the node's dataMap to know where data entries end.
+  static int contentIndexFromNodeIndex(int nodeIndex, int dataMap) =>
       (bitCount(dataMap) * 2) + nodeIndex; // Data entries come first
 
   // --- Core Methods ---
@@ -743,8 +748,10 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
     if ((dataMap & bitpos) != 0) {
       // Check data entries first
-      final dataIndex = dataIndexFromFragment(frag);
-      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+        dataIndex,
+      );
       // Check if the key matches
       if (content[payloadIndex] == key) {
         return content[payloadIndex + 1] as V;
@@ -752,8 +759,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       return null; // Hash fragment collision, but different key
     } else if ((nodeMap & bitpos) != 0) {
       // Check sub-nodes
-      final nodeIndex = nodeIndexFromFragment(frag);
-      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+        nodeIndex,
+        dataMap,
+      );
       final subNode = content[contentIdx] as ChampNode<K, V>;
       // Recursively search in the sub-node
       return subNode.get(key, hash, shift + kBitPartitionSize);
@@ -769,14 +779,19 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
     if ((dataMap & bitpos) != 0) {
       // Check data entries first
-      final dataIndex = dataIndexFromFragment(frag);
-      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+        dataIndex,
+      );
       // Check if the key matches
       return content[payloadIndex] == key;
     } else if ((nodeMap & bitpos) != 0) {
       // Check sub-nodes
-      final nodeIndex = nodeIndexFromFragment(frag);
-      final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+      final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+        nodeIndex,
+        dataMap,
+      );
       final subNode = content[contentIdx] as ChampNode<K, V>;
       // Recursively search in the sub-node
       return subNode.containsKey(key, hash, shift + kBitPartitionSize);
@@ -965,8 +980,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
     final currentValue = content[payloadIndex + 1] as V;
 
@@ -1005,8 +1020,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final addResult = subNode.add(
       key,
@@ -1030,7 +1048,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int bitpos,
   ) {
     assert(isTransient(_owner));
-    final dataIndex = dataIndexFromFragment(frag);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
     _insertDataEntryInPlace(dataIndex, key, value, bitpos); // Mutate in place
     return (node: this, didAdd: true);
   }
@@ -1045,15 +1063,16 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
     final currentValue = content[payloadIndex + 1] as V;
 
     if (currentKey == key) {
       // Update existing key
-      if (currentValue == value)
+      if (currentValue == value) {
         return (node: this, didAdd: false); // No change
+      }
       // Create new content list with updated value
       final newContent = List<Object?>.of(content);
       newContent[payloadIndex + 1] = value;
@@ -1157,8 +1176,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final addResult = subNode.add(
       key,
@@ -1185,7 +1207,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final dataIndex = dataIndexFromFragment(frag);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
     // Create new content list with inserted data
     final newContent = List<Object?>.of(content)
       ..insertAll(dataIndex * 2, [key, value]);
@@ -1206,8 +1228,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     if (content[payloadIndex] == key) {
       // Found the key to remove
       _removeDataEntryInPlace(dataIndex, bitpos);
@@ -1227,8 +1249,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final removeResult = subNode.remove(
       key,
@@ -1268,8 +1293,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   // --- Immutable Remove Helpers ---
 
   ChampRemoveResult<K, V> _removeImmutableData(K key, int frag, int bitpos) {
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     if (content[payloadIndex] == key) {
       // Found the key to remove
       // Create new node with data entry removed
@@ -1295,8 +1320,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final removeResult = subNode.remove(
       key,
@@ -1328,7 +1356,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       final newDataMap = dataMap | bitpos;
       final newNodeMap = nodeMap ^ bitpos;
       final dataPayloadIndex =
-          dataIndexFromFragment(frag) * 2; // Index where new data goes
+          ChampInternalNode.dataIndexFromFragment(frag, newDataMap) *
+          2; // Index where new data goes in the *new* map
 
       // Create new content list: copy old data, insert new data, copy old nodes (excluding replaced one)
       final newDataCount = bitCount(newDataMap);
@@ -1399,8 +1428,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
 
     if (currentKey == key) {
@@ -1453,8 +1482,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
 
     // Recursively update the sub-node
@@ -1487,7 +1519,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     if (ifAbsentFn != null) {
       // Insert new data entry using ifAbsentFn (in place)
       final newValue = ifAbsentFn();
-      final dataIndex = dataIndexFromFragment(frag);
+      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
       _insertDataEntryInPlace(dataIndex, key, newValue, bitpos);
       return (node: this, sizeChanged: true);
     } else {
@@ -1507,8 +1539,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     V Function(V value) updateFn,
     V Function()? ifAbsentFn,
   ) {
-    final dataIndex = dataIndexFromFragment(frag);
-    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
 
     if (currentKey == key) {
@@ -1561,8 +1593,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     V Function(V value) updateFn,
     V Function()? ifAbsentFn,
   ) {
-    final nodeIndex = nodeIndexFromFragment(frag);
-    final contentIdx = contentIndexFromNodeIndex(nodeIndex);
+    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     final subNode = content[contentIdx] as ChampNode<K, V>;
 
     // Recursively update the sub-node
@@ -1598,7 +1633,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     if (ifAbsentFn != null) {
       // Insert new data entry using ifAbsentFn
       final newValue = ifAbsentFn();
-      final dataIndex = dataIndexFromFragment(frag);
+      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
       final newContent = List<Object?>.of(content)
         ..insertAll(dataIndex * 2, [key, newValue]);
       return (
@@ -1717,7 +1752,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   /// Assumes the node is transient and owned.
   void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
     assert(isTransient(_owner));
-    final dataPayloadIndex = dataIndex * 2;
+    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+      dataIndex,
+    );
     // Insert into the list directly
     content.insertAll(dataPayloadIndex, [key, value]);
     // Update bitmap
@@ -1729,7 +1766,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   /// Assumes the node is transient and owned.
   void _removeDataEntryInPlace(int dataIndex, int bitpos) {
     assert(isTransient(_owner));
-    final dataPayloadIndex = dataIndex * 2;
+    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+      dataIndex,
+    );
     // Remove from the list
     content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
     // Update bitmap
@@ -1741,8 +1780,11 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   /// Assumes the node is transient and owned.
   void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
     assert(isTransient(_owner));
-    final dataEndIndex = bitCount(dataMap) * 2;
-    final contentNodeIndex = dataEndIndex + nodeIndex;
+    // Use static helper, passing current dataMap
+    final contentNodeIndex = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    );
     // Remove from the list
     content.removeAt(contentNodeIndex);
     // Update bitmap
@@ -1758,7 +1800,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int bitpos,
   ) {
     assert(isTransient(_owner));
-    final dataPayloadIndex = dataIndex * 2;
+    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+      dataIndex,
+    );
 
     // --- Calculate node insertion index ---
     // This needs to be based on the fragment corresponding to the bitpos
@@ -1797,10 +1841,21 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
   /// Assumes the node is transient and owned.
   void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
     assert(isTransient(_owner));
-    final dataPayloadIndex =
-        dataIndexFromFragment(indexFragment(0, hashOfKey(key))) *
-        2; // Index where new data *will* go
-    final nodeContentIndex = contentIndexFromNodeIndex(nodeIndex);
+    // Calculate where new data *will* go based on the *final* dataMap state
+    final frag = indexFragment(0, hashOfKey(key)); // Fragment for the new data
+    final targetDataMap =
+        dataMap | bitpos; // dataMap *after* adding the new data bit
+    final targetDataIndex = ChampInternalNode.dataIndexFromFragment(
+      frag,
+      targetDataMap,
+    );
+    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
+      targetDataIndex,
+    );
+    final nodeContentIndex = ChampInternalNode.contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    ); // Index of node to remove (uses *current* dataMap)
 
     // Remove the node entry
     content.removeAt(nodeContentIndex);

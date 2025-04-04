@@ -98,49 +98,73 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       return champ.ChampCollisionNode<K, V>(firstHash, entries, owner);
     }
 
-    // Partition entries based on hash fragment for the current shift level
+    // --- Refactored _buildNode Logic ---
+
+    // 1. First Pass: Partition and calculate final maps
     final List<List<MapEntry<K, V>>> partitions = List.generate(
       1 << champ.kBitPartitionSize,
       (_) => [],
+      growable: false, // Partitions list itself doesn't need to grow
     );
-    for (final entry in entries) {
-      final frag = champ.indexFragment(shift, entry.key.hashCode);
-      partitions[frag].add(entry);
-    }
-
     int dataMap = 0;
     int nodeMap = 0;
-    final List<Object?> dataContent = []; // Stores key, value pairs
-    final List<champ.ChampNode<K, V>> nodeContent = []; // Stores sub-nodes
-
+    for (final entry in entries) {
+      final frag = champ.indexFragment(shift, entry.key.hashCode);
+      partitions[frag].add(entry); // Add entry to its partition
+    }
+    // Determine final dataMap and nodeMap based on partition lengths
     for (int i = 0; i < partitions.length; i++) {
-      final partition = partitions[i];
-      if (partition.isEmpty) continue;
-
-      final bitpos = 1 << i;
-      if (partition.length == 1) {
-        // Single entry for this fragment -> DataNode
-        dataMap |= bitpos;
-        dataContent.add(partition.first.key);
-        dataContent.add(partition.first.value);
-      } else {
-        // Multiple entries for this fragment -> SubNode (Internal or Collision)
-        nodeMap |= bitpos;
-        // Recursively build the sub-node for the next level
-        nodeContent.add(
-          _buildNode(partition, shift + champ.kBitPartitionSize, owner),
-        );
+      final partitionLength = partitions[i].length;
+      if (partitionLength == 1) {
+        dataMap |= (1 << i);
+      } else if (partitionLength > 1) {
+        nodeMap |= (1 << i);
       }
     }
 
-    // Combine data and node content into the final content list
-    final List<Object?> finalContent = [...dataContent, ...nodeContent];
+    // 2. Calculate Size & Allocate final content list
+    final dataCount = champ.bitCount(dataMap);
+    final nodeCount = champ.bitCount(nodeMap);
+    final contentSize = (dataCount * 2) + nodeCount;
+    // Allocate the list directly. Use `null` as placeholder, assuming ChampInternalNode handles it.
+    // Make it growable: true as ChampInternalNode constructor expects it for transient nodes.
+    final List<Object?> finalContent = List.filled(
+      contentSize,
+      null,
+      growable: true,
+    );
 
-    // Create the transient internal node
+    // 3. Second Pass: Populate the final content list directly
+    int dataPayloadIndex = 0; // Tracks current index for data [k, v, k, v...]
+    int nodeContentIndex =
+        dataCount * 2; // Tracks current index for nodes [...]
+
+    for (int frag = 0; frag < partitions.length; frag++) {
+      final partition = partitions[frag];
+      if (partition.isEmpty) continue;
+
+      final bitpos = 1 << frag;
+      if ((dataMap & bitpos) != 0) {
+        // Single entry -> Place directly into data section
+        final entry = partition.first;
+        finalContent[dataPayloadIndex++] = entry.key;
+        finalContent[dataPayloadIndex++] = entry.value;
+      } else {
+        // Multiple entries -> Recursively build sub-node and place in node section
+        final subNode = _buildNode(
+          partition,
+          shift + champ.kBitPartitionSize,
+          owner,
+        );
+        finalContent[nodeContentIndex++] = subNode;
+      }
+    }
+
+    // 4. Create and return the transient internal node
     return champ.ChampInternalNode<K, V>(
       dataMap,
       nodeMap,
-      finalContent,
+      finalContent, // Pass the directly populated list
       owner, // Pass owner for transient creation
     );
   }
