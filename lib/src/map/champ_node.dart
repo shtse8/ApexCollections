@@ -3,7 +3,7 @@
 ///
 /// This library includes the abstract [ChampNode] base class and its concrete
 /// implementations: [ChampEmptyNode], [ChampDataNode], [ChampCollisionNode],
-/// and [ChampInternalNode]. It also defines constants related to the trie structure
+/// [ChampSparseNode], and [ChampArrayNode]. It also defines constants related to the trie structure
 /// (like [kBitPartitionSize]) and the [TransientOwner] mechanism for mutable operations.
 library;
 
@@ -25,7 +25,10 @@ const int kBitPartitionMask = (1 << kBitPartitionSize) - 1;
 /// and the partition size. `ceil(32 / 5) = 7`.
 const int kMaxDepth = 7; // ceil(32 / 5) - Max depth based on 32-bit hash
 
-// --- Helper Functions ---
+/// Threshold for switching between Sparse and Array nodes.
+const int kSparseNodeThreshold = 8;
+
+// --- Top-Level Helper Functions for Index Calculation ---
 
 /// Counts the number of set bits (1s) in an integer's binary representation.
 /// Also known as the Hamming weight or population count (popcount).
@@ -45,6 +48,28 @@ int bitCount(int i) {
 /// Extracts the relevant fragment (portion) of the [hash] code for a given [shift] level.
 /// The [shift] determines which bits of the hash code are considered for this level.
 int indexFragment(int shift, int hash) => (hash >> shift) & kBitPartitionMask;
+
+/// Calculates the index within the data portion of the children/content list
+/// corresponding to a given hash fragment [frag].
+/// Requires the node's dataMap.
+int dataIndexFromFragment(int frag, int dataMap) =>
+    bitCount(dataMap & ((1 << frag) - 1));
+
+/// Calculates the index within the node portion of the children/content list
+/// corresponding to a given hash fragment [frag].
+/// Requires the node's nodeMap.
+int nodeIndexFromFragment(int frag, int nodeMap) =>
+    bitCount(nodeMap & ((1 << frag) - 1));
+
+/// Calculates the starting index in the children/content list for a data entry,
+/// given its index within the conceptual data array ([dataIndex]).
+int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
+
+/// Calculates the index in the children/content list for a child node,
+/// given its index within the conceptual node array ([nodeIndex]).
+/// Requires the node's dataMap to know where data entries end.
+int contentIndexFromNodeIndex(int nodeIndex, int dataMap) =>
+    (bitCount(dataMap) * 2) + nodeIndex; // Data entries come first
 
 // --- Transient Ownership ---
 
@@ -68,7 +93,7 @@ class TransientOwner {
 /// * [ChampEmptyNode]: Represents the canonical empty map.
 /// * [ChampDataNode]: Represents a single key-value pair.
 /// * [ChampCollisionNode]: Represents multiple entries with hash collisions at a certain depth.
-/// * [ChampInternalNode]: Represents a branch with multiple children (data or other nodes).
+/// * [ChampSparseNode] / [ChampArrayNode]: Represents a branch with multiple children (data or other nodes).
 ///
 /// Nodes are immutable by default but support transient mutation via the
 /// [TransientOwner] mechanism for performance optimization during bulk updates.
@@ -295,7 +320,7 @@ class ChampDataNode<K, V> extends ChampNode<K, V> {
       return (node: ChampDataNode(hash, key, value), didAdd: false);
     }
 
-    // Collision: Create a new node (Internal or Collision) to merge the two entries.
+    // Collision: Create a new node (Bitmap or Collision) to merge the two entries.
     final newNode = mergeDataEntries(
       shift, // Start merging from the current shift level
       dataHash,
@@ -423,11 +448,13 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
     TransientOwner? owner,
   ) {
     if (hash != collisionHash) {
-      // Hash differs, need to create an internal node to split this collision node
+      // Hash differs, need to create a bitmap node to split this collision node
       // and the new data node based on their differing hash fragments at this level.
       final dataNode = ChampDataNode<K, V>(hash, key, value);
-      final newNode = ChampInternalNode<K, V>.fromNodes(
-        shift, // Create internal node at the current shift level
+      // Use the static factory on ChampBitmapNode
+      final newNode = ChampBitmapNode.fromNodes<K, V>(
+        // Use static factory
+        shift, // Create bitmap node at the current shift level
         collisionHash,
         this, // Existing collision node
         hash,
@@ -538,7 +565,9 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
         // Add as a new entry (will create an internal node to split)
         final newValue = ifAbsentFn();
         final dataNode = ChampDataNode<K, V>(hash, key, newValue);
-        final newNode = ChampInternalNode<K, V>.fromNodes(
+        // Use the static factory on ChampBitmapNode
+        final newNode = ChampBitmapNode.fromNodes<K, V>(
+          // Use static factory
           shift,
           collisionHash,
           this,
@@ -638,56 +667,30 @@ class ChampCollisionNode<K, V> extends ChampNode<K, V> {
   }
 }
 
-// --- Internal Node ---
+// --- Bitmap Node Base Class ---
 
-/// Represents an internal node (branch) in the CHAMP Trie.
-///
-/// Uses two bitmaps, [dataMap] and [nodeMap], to efficiently track whether a
-/// given hash fragment corresponds to a direct data entry (key-value pair) or
-/// a child node stored in the [content] list.
-///
-/// The [content] list stores data entries interleaved (key, value, key, value...)
-/// followed by child nodes ([ChampNode]). The indices are calculated based on the
-/// population count ([bitCount]) of the bitmaps.
-class ChampInternalNode<K, V> extends ChampNode<K, V> {
-  /// Bitmap indicating which hash fragments correspond to data entries in [content].
-  int dataMap; // Made mutable for transient ops
+/// Abstract base class for CHAMP nodes that use bitmaps ([dataMap], [nodeMap])
+/// to manage children (data entries or sub-nodes).
+abstract class ChampBitmapNode<K, V> extends ChampNode<K, V> {
+  /// Bitmap indicating which hash fragments correspond to data entries.
+  int dataMap;
 
-  /// Bitmap indicating which hash fragments correspond to child nodes in [content].
-  int nodeMap; // Made mutable for transient ops
+  /// Bitmap indicating which hash fragments correspond to child nodes.
+  int nodeMap;
 
-  /// Array storing data entries (key, value pairs) and sub-nodes.
-  /// Data entries are stored first, ordered by their hash fragment index,
-  /// followed by sub-nodes, also ordered by their hash fragment index.
-  /// Data: `[k1, v1, k2, v2, ...]`
-  /// Nodes: `[..., nodeA, nodeB, ...]`
-  /// This list is mutable only if the node is transient.
-  List<Object?> content; // Made mutable for transient ops
+  /// Constructor for bitmap nodes.
+  ChampBitmapNode(this.dataMap, this.nodeMap, [TransientOwner? owner])
+    : super(owner);
 
-  /// Creates an internal CHAMP node.
-  ///
-  /// - [dataMap]: Bitmap for data entries.
-  /// - [nodeMap]: Bitmap for child nodes.
-  /// - [content]: The combined list of data payloads and child nodes, ordered correctly.
-  /// - [owner]: Optional [TransientOwner] for mutability.
-  ChampInternalNode(
-    this.dataMap,
-    this.nodeMap,
-    List<Object?> content, [
-    TransientOwner? owner,
-  ])
-    // Ensure content is mutable if node is transient, otherwise copy to unmodifiable
-    : content = (owner != null) ? content : List.unmodifiable(content),
-       super(owner);
+  /// Calculates the total number of children (data entries + nodes).
+  int get childCount => bitCount(dataMap) + bitCount(nodeMap);
 
-  /// Factory constructor to create an internal node from two initial child nodes
-  /// that have different hash fragments at the current [shift] level.
-  /// Used when merging data entries or splitting collision nodes.
-  /// Factory constructor to create an internal node from two initial child nodes
+  /// Factory constructor to create a suitable BitmapNode (Sparse or Array) from two initial child nodes
   /// that have different hash fragments at the current [shift] level.
   /// Used when merging data entries or splitting collision nodes.
   /// Creates a transient node if an [owner] is provided.
-  factory ChampInternalNode.fromNodes(
+  static ChampBitmapNode<K, V> fromNodes<K, V>(
+    // Add type parameters here
     int shift,
     int hash1,
     ChampNode<K, V> node1,
@@ -703,79 +706,977 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final bitpos1 = 1 << frag1;
     final bitpos2 = 1 << frag2;
     final newNodeMap = bitpos1 | bitpos2;
+    final dataMap = 0; // Starts with only nodes
 
     // Order nodes based on fragment index for consistent content layout
-    final List<Object?> newContent;
+    final List<Object?> children;
     if (frag1 < frag2) {
-      newContent = [node1, node2];
+      children = [node1, node2];
     } else {
-      newContent = [node2, node1];
+      children = [node2, node1];
     }
 
-    // Create the new internal node (potentially transient if owner is provided)
-    return ChampInternalNode<K, V>(
-      0, // No data entries initially
-      newNodeMap,
-      newContent,
-      owner, // Pass owner to potentially create a transient node
+    // Decide whether to create Sparse or Array node based on initial count (which is 2)
+    if (2 <= kSparseNodeThreshold) {
+      return ChampSparseNode<K, V>(dataMap, newNodeMap, children, owner);
+    } else {
+      // This case shouldn't happen if threshold > 2, but included for completeness
+      return ChampArrayNode<K, V>(dataMap, newNodeMap, children, owner);
+    }
+  }
+
+  // --- Core Methods ---
+  // Implement abstract methods from ChampNode
+  @override
+  V? get(K key, int hash, int shift);
+  @override
+  bool containsKey(K key, int hash, int shift);
+  @override
+  ChampAddResult<K, V> add(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  );
+  @override
+  ChampRemoveResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  );
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+    TransientOwner? owner,
+  });
+  @override
+  ChampNode<K, V> freeze(TransientOwner? owner);
+
+  // --- Transient Helper Methods ---
+  /// Returns this node if it's mutable and owned by [owner],
+  /// otherwise returns a new mutable copy owned by [owner].
+  /// Used for transient operations.
+  ChampBitmapNode<K, V> ensureMutable(TransientOwner? owner);
+} // End of ChampBitmapNode
+
+// --- Sparse Node Implementation ---
+class ChampSparseNode<K, V> extends ChampBitmapNode<K, V> {
+  List<Object?> children;
+
+  ChampSparseNode(
+    int dataMap,
+    int nodeMap,
+    List<Object?> children, [
+    TransientOwner? owner,
+  ]) : children = (owner != null) ? children : List.unmodifiable(children),
+       assert(bitCount(dataMap) + bitCount(nodeMap) <= kSparseNodeThreshold),
+       assert(children.length == bitCount(dataMap) * 2 + bitCount(nodeMap)),
+       super(dataMap, nodeMap, owner);
+
+  // --- In-place mutation helpers (SparseNode) ---
+
+  /// Inserts a data entry into the `children` list. Updates `dataMap`. Assumes transient.
+  void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    children.insertAll(dataPayloadIndex, [key, value]);
+    dataMap |= bitpos;
+  }
+
+  /// Removes a data entry from the `children` list. Updates `dataMap`. Assumes transient.
+  void _removeDataEntryInPlace(int dataIndex, int bitpos) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    children.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
+    dataMap ^= bitpos;
+  }
+
+  /// Removes a child node entry from the `children` list. Updates `nodeMap`. Assumes transient.
+  void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
+    assert(isTransient(_owner));
+    final contentNodeIndex = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    children.removeAt(contentNodeIndex);
+    nodeMap ^= bitpos;
+  }
+
+  /// Replaces a data entry with a sub-node in place. Updates bitmaps. Assumes transient.
+  void _replaceDataWithNodeInPlace(
+    int dataIndex,
+    ChampNode<K, V> subNode,
+    int bitpos,
+  ) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    final frag = bitCount(bitpos - 1); // Fragment index of the new node
+    final targetNodeMap =
+        nodeMap | bitpos; // Node map *after* adding the new node bit
+    final targetNodeIndex = bitCount(
+      targetNodeMap & (bitpos - 1),
+    ); // Nodes before the new one
+    // Node section starts after remaining data entries
+    final nodeInsertPos = (bitCount(dataMap) - 1) * 2 + targetNodeIndex;
+
+    // Modify children list
+    children.removeRange(
+      dataPayloadIndex,
+      dataPayloadIndex + 2,
+    ); // Remove old data
+    if (nodeInsertPos > children.length) {
+      children.add(subNode); // Append if at the end
+    } else {
+      children.insert(nodeInsertPos, subNode); // Insert in the middle
+    }
+
+    // Update bitmaps
+    dataMap ^= bitpos; // Remove data bit
+    nodeMap |= bitpos; // Add node bit
+  }
+
+  /// Replaces a node entry with a data entry in place. Updates bitmaps. Assumes transient.
+  void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
+    assert(isTransient(_owner));
+    final frag = bitCount(bitpos - 1); // Fragment for the new data
+    final targetDataMap =
+        dataMap | bitpos; // dataMap *after* adding the new data bit
+    final targetDataIndex = dataIndexFromFragment(frag, targetDataMap);
+    final dataPayloadIndex = contentIndexFromDataIndex(targetDataIndex);
+    final nodeContentIndex = contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    ); // Index of node to remove
+
+    // Remove the node entry
+    children.removeAt(nodeContentIndex);
+    // Insert the data entry (key, value) at the correct position
+    children.insertAll(dataPayloadIndex, [key, value]);
+
+    // Update bitmaps
+    dataMap |= bitpos; // Add data bit
+    nodeMap ^= bitpos; // Remove node bit
+  }
+
+  /// Checks if the node needs shrinking/collapsing after a removal and performs it (in place).
+  /// Returns the potentially new node (e.g., if collapsed).
+  /// Assumes the node is transient and owned.
+  ChampNode<K, V>? _shrinkIfNeeded(TransientOwner? owner) {
+    assert(isTransient(owner));
+    final currentChildCount = childCount;
+
+    // Condition 1: Collapse to EmptyNode
+    if (currentChildCount == 0) {
+      assert(dataMap == 0 && nodeMap == 0);
+      return ChampEmptyNode<K, V>();
+    }
+
+    // Condition 2: Collapse to DataNode
+    if (currentChildCount == 1 && nodeMap == 0) {
+      assert(bitCount(dataMap) == 1);
+      final key = children[0] as K;
+      final value = children[1] as V;
+      return ChampDataNode<K, V>(
+        hashOfKey(key),
+        key,
+        value,
+      ); // Return immutable DataNode
+    }
+
+    // Condition 3: Collapse to single sub-node
+    if (currentChildCount == 1 && dataMap == 0) {
+      assert(bitCount(nodeMap) == 1);
+      return children[0] as ChampNode<K, V>; // Return the sub-node
+    }
+
+    // No shrinking/collapsing needed, return this (mutable) SparseNode
+    return this;
+  }
+
+  // --- Immutable Helper (SparseNode - adapted from ArrayNode) ---
+
+  /// Creates a new node replacing a data entry with a sub-node immutably.
+  /// Handles potential transition to ArrayNode.
+  ChampNode<K, V> _replaceDataWithNodeImmutable(
+    int dataIndex,
+    ChampNode<K, V> subNode,
+    int bitpos,
+  ) {
+    final dataPayloadIndex = dataIndex * 2;
+    final dataCount = bitCount(dataMap);
+    final nodeCount = bitCount(nodeMap);
+    final newChildCount =
+        (dataCount - 1) + (nodeCount + 1); // Calculate new count
+    final newNodeStartIndex =
+        (dataCount - 1) * 2; // Start index for nodes in new list
+
+    // Create the new children list
+    final newChildren = List<Object?>.filled(
+      newNodeStartIndex + (nodeCount + 1),
+      null,
+      growable: false,
+    );
+
+    // --- Copy elements into newChildren ---
+    // Copy data before the replaced entry
+    if (dataIndex > 0) newChildren.setRange(0, dataPayloadIndex, children, 0);
+    // Copy data after the replaced entry
+    if (dataIndex < dataCount - 1) {
+      newChildren.setRange(
+        dataPayloadIndex,
+        newNodeStartIndex,
+        children,
+        dataPayloadIndex + 2,
+      );
+    }
+
+    // Calculate insertion position for the new subNode
+    final frag = bitCount(bitpos - 1);
+    final targetNodeMap = nodeMap | bitpos;
+    final targetNodeIndex = bitCount(targetNodeMap & (bitpos - 1));
+    final nodeInsertPos = newNodeStartIndex + targetNodeIndex;
+
+    // Copy existing nodes around the insertion point
+    if (nodeCount > 0) {
+      final oldNodeStartIndex = dataCount * 2;
+      // Copy nodes before insertion point
+      if (targetNodeIndex > 0) {
+        newChildren.setRange(
+          newNodeStartIndex,
+          nodeInsertPos,
+          children,
+          oldNodeStartIndex,
+        );
+      }
+      // Copy nodes after insertion point
+      if (targetNodeIndex < nodeCount) {
+        newChildren.setRange(
+          nodeInsertPos + 1,
+          newChildren.length,
+          children,
+          oldNodeStartIndex + targetNodeIndex,
+        );
+      }
+    }
+    // Insert the new subNode
+    newChildren[nodeInsertPos] = subNode;
+    // --- End Copy ---
+
+    final newDataMap = dataMap ^ bitpos; // Remove data bit
+    final newNodeMap = nodeMap | bitpos; // Add node bit
+
+    // Decide if new node should be Sparse or Array based on the *new* count
+    if (newChildCount > kSparseNodeThreshold) {
+      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newChildren);
+    } else {
+      // Use _createImmutableNode logic for potential collapse (already handles sparse case)
+      return _createImmutableNode(newDataMap, newNodeMap, newChildren);
+    }
+  }
+
+  /// Helper to create the correct immutable node type (Sparse, Array, Data, Empty)
+  /// based on the final child count after an immutable operation.
+  /// Assumes the caller has already calculated the final bitmaps and content.
+  ChampNode<K, V> _createImmutableNode(
+    int newDataMap,
+    int newNodeMap,
+    List<Object?> newContent,
+  ) {
+    final childCount = bitCount(newDataMap) + bitCount(newNodeMap);
+
+    if (childCount == 0) return ChampEmptyNode<K, V>();
+
+    if (childCount == 1) {
+      if (bitCount(newDataMap) == 1) {
+        // Collapse to DataNode
+        final key = newContent[0] as K;
+        final value = newContent[1] as V;
+        return ChampDataNode<K, V>(hashOfKey(key), key, value);
+      } else {
+        // Collapse to single sub-node (return the sub-node directly)
+        return newContent[0] as ChampNode<K, V>;
+      }
+    }
+
+    // Check threshold *before* creating node
+    if (childCount <= kSparseNodeThreshold) {
+      // Stay or become SparseNode
+      return ChampSparseNode<K, V>(newDataMap, newNodeMap, newContent);
+    } else {
+      // Transition to ArrayNode
+      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newContent);
+    }
+  }
+
+  // --- Transient Add Helpers (SparseNode) ---
+
+  ChampAddResult<K, V> _addTransientDataCollision(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final currentKey = children[payloadIndex] as K;
+    final currentValue = children[payloadIndex + 1] as V;
+
+    if (currentKey == key) {
+      if (currentValue == value) return (node: this, didAdd: false);
+      children[payloadIndex + 1] = value; // Mutate in place
+      return (node: this, didAdd: false);
+    } else {
+      final subNode = mergeDataEntries(
+        shift + kBitPartitionSize,
+        hashOfKey(currentKey),
+        currentKey,
+        currentValue,
+        hash,
+        key,
+        value,
+        owner,
+      );
+      _replaceDataWithNodeInPlace(
+        dataIndex,
+        subNode,
+        bitpos,
+      ); // Mutate in place
+      // No transition check needed here, count doesn't change
+      return (node: this, didAdd: true);
+    }
+  }
+
+  ChampAddResult<K, V> _addTransientDelegate(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+    final addResult = subNode.add(
+      key,
+      value,
+      hash,
+      shift + kBitPartitionSize,
+      owner,
+    );
+
+    if (identical(addResult.node, subNode))
+      return (node: this, didAdd: addResult.didAdd);
+
+    children[contentIdx] = addResult.node; // Update content in place
+    // No transition check needed here, count doesn't change relative to this node
+    return (node: this, didAdd: addResult.didAdd);
+  }
+
+  ChampAddResult<K, V> _addTransientEmptySlot(
+    K key,
+    V value,
+    int frag,
+    int bitpos,
+    TransientOwner owner, // Added owner
+  ) {
+    assert(isTransient(owner)); // Use owner
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    _insertDataEntryInPlace(dataIndex, key, value, bitpos); // Mutate in place
+
+    // Check for transition Sparse -> Array
+    if (childCount > kSparseNodeThreshold) {
+      // Create ArrayNode, passing the current mutable children list and owner
+      return (
+        node: ChampArrayNode<K, V>(dataMap, nodeMap, children, owner),
+        didAdd: true,
+      );
+    }
+    // Remain SparseNode
+    return (node: this, didAdd: true);
+  }
+
+  // --- Immutable Add Helpers (SparseNode) ---
+
+  ChampAddResult<K, V> _addImmutableDataCollision(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+  ) {
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final currentKey = children[payloadIndex] as K;
+    final currentValue = children[payloadIndex + 1] as V;
+
+    if (currentKey == key) {
+      if (currentValue == value) return (node: this, didAdd: false);
+      // Create new children list with updated value (Manual Copy Optimization)
+      final len = children.length;
+      final newChildren = List<Object?>.filled(len, null);
+      for (int i = 0; i < len; i++) {
+        newChildren[i] = children[i];
+      }
+      newChildren[payloadIndex + 1] = value; // Update the specific value
+      // Count doesn't change, stays SparseNode
+      return (
+        node: ChampSparseNode<K, V>(dataMap, nodeMap, newChildren),
+        didAdd: false,
+      );
+    } else {
+      // Hash collision, different keys -> create sub-node
+      final subNode = mergeDataEntries(
+        shift + kBitPartitionSize,
+        hashOfKey(currentKey),
+        currentKey,
+        currentValue,
+        hash,
+        key,
+        value,
+        null, // Immutable merge
+      );
+      // Create new node replacing data with sub-node
+      final newNode = _replaceDataWithNodeImmutable(dataIndex, subNode, bitpos);
+      return (node: newNode, didAdd: true);
+    }
+  }
+
+  ChampAddResult<K, V> _addImmutableDelegate(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+  ) {
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+    final addResult = subNode.add(
+      key,
+      value,
+      hash,
+      shift + kBitPartitionSize,
+      null,
+    ); // Immutable add
+
+    if (identical(addResult.node, subNode))
+      return (node: this, didAdd: addResult.didAdd); // No change
+
+    // Create new children list with updated sub-node
+    final newChildren = List<Object?>.of(children);
+    newChildren[contentIdx] = addResult.node;
+    // Count doesn't change, stays SparseNode (no transition check needed)
+    return (
+      node: ChampSparseNode<K, V>(dataMap, nodeMap, newChildren),
+      didAdd: addResult.didAdd,
     );
   }
 
-  // --- Helper methods for index calculation ---
+  ChampAddResult<K, V> _addImmutableEmptySlot(
+    K key,
+    V value,
+    int frag,
+    int bitpos,
+  ) {
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = dataIndex * 2;
+    // Create new children list with inserted entry
+    final newChildren = List<Object?>.of(children)
+      ..insertAll(payloadIndex, [key, value]);
+    final newDataMap = dataMap | bitpos;
+    final newChildCount = childCount + 1; // Calculate new count
 
-  /// Calculates the index within the data portion of the [content] list
-  /// corresponding to a given hash fragment [frag].
-  /// Requires the node's dataMap.
-  static int dataIndexFromFragment(int frag, int dataMap) =>
-      bitCount(dataMap & ((1 << frag) - 1));
+    // Check for transition Sparse -> Array
+    if (newChildCount > kSparseNodeThreshold) {
+      return (
+        node: ChampArrayNode<K, V>(newDataMap, nodeMap, newChildren),
+        didAdd: true,
+      );
+    } else {
+      return (
+        node: ChampSparseNode<K, V>(newDataMap, nodeMap, newChildren),
+        didAdd: true,
+      );
+    }
+  }
 
-  /// Calculates the index within the node portion of the [content] list
-  /// corresponding to a given hash fragment [frag].
-  /// Requires the node's nodeMap.
-  static int nodeIndexFromFragment(int frag, int nodeMap) =>
-      bitCount(nodeMap & ((1 << frag) - 1));
+  // --- Transient Remove Helpers (SparseNode) ---
 
-  /// Calculates the starting index in the [content] list for a data entry,
-  /// given its index within the conceptual data array ([dataIndex]).
-  static int contentIndexFromDataIndex(int dataIndex) => dataIndex * 2;
+  ChampRemoveResult<K, V> _removeTransientData(
+    K key,
+    int frag,
+    int bitpos,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    if (children[payloadIndex] == key) {
+      // Found the key to remove
+      _removeDataEntryInPlace(dataIndex, bitpos); // Mutate in place
+      // Check if node needs shrinking/collapsing (Sparse version)
+      final newNode = _shrinkIfNeeded(owner);
+      return (node: newNode ?? ChampEmptyNode<K, V>(), didRemove: true);
+    }
+    return (node: this, didRemove: false); // Key not found
+  }
 
-  /// Calculates the index in the [content] list for a child node,
-  /// given its index within the conceptual node array ([nodeIndex]).
-  /// Requires the node's dataMap to know where data entries end.
-  static int contentIndexFromNodeIndex(int nodeIndex, int dataMap) =>
-      (bitCount(dataMap) * 2) + nodeIndex; // Data entries come first
+  ChampRemoveResult<K, V> _removeTransientDelegate(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+    final removeResult = subNode.remove(
+      key,
+      hash,
+      shift + kBitPartitionSize,
+      owner,
+    );
 
-  // --- Core Methods ---
+    if (!removeResult.didRemove) return (node: this, didRemove: false);
 
+    // Sub-node changed, update content in place
+    children[contentIdx] = removeResult.node;
+
+    // Check if the sub-node became empty or needs merging
+    if (removeResult.node.isEmptyNode) {
+      _removeNodeEntryInPlace(nodeIndex, bitpos); // Mutate in place
+      final newNode = _shrinkIfNeeded(owner); // Check for collapse
+      return (node: newNode ?? ChampEmptyNode<K, V>(), didRemove: true);
+    } else if (removeResult.node is ChampDataNode<K, V>) {
+      // If sub-node collapsed to a data node, replace node entry with data entry
+      final dataNode = removeResult.node as ChampDataNode<K, V>;
+      _replaceNodeWithDataInPlace(
+        nodeIndex,
+        dataNode.dataKey,
+        dataNode.dataValue,
+        bitpos,
+      ); // Mutate in place
+      // No need to shrink here as count didn't change, stays Sparse
+      return (node: this, didRemove: true);
+    }
+    // Sub-node modified but not removed/collapsed, return mutable node
+    return (node: this, didRemove: true);
+  }
+
+  // --- Immutable Remove Helpers (SparseNode) ---
+
+  ChampRemoveResult<K, V> _removeImmutableData(K key, int frag, int bitpos) {
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    if (children[payloadIndex] == key) {
+      // Found the key to remove
+      final newDataMap = dataMap ^ bitpos;
+      if (newDataMap == 0 && nodeMap == 0)
+        return (node: ChampEmptyNode<K, V>(), didRemove: true);
+
+      // Create new list with data entry removed
+      final newChildren = List<Object?>.of(children)
+        ..removeRange(payloadIndex, payloadIndex + 2);
+      // Create new node (will be Sparse or simpler)
+      final newNode = _createImmutableNode(newDataMap, nodeMap, newChildren);
+      return (node: newNode, didRemove: true);
+    }
+    return (node: this, didRemove: false); // Key not found
+  }
+
+  ChampRemoveResult<K, V> _removeImmutableDelegate(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+  ) {
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+    final removeResult = subNode.remove(
+      key,
+      hash,
+      shift + kBitPartitionSize,
+      null,
+    ); // Immutable remove
+
+    if (!removeResult.didRemove) return (node: this, didRemove: false);
+
+    // Sub-node changed, create new node with updated sub-node
+    final newChildren = List<Object?>.of(children);
+    newChildren[contentIdx] = removeResult.node;
+
+    if (removeResult.node.isEmptyNode) {
+      // Remove the empty sub-node entry
+      final newNodeMap = nodeMap ^ bitpos;
+      newChildren.removeAt(contentIdx); // Remove from the copied list
+      if (dataMap == 0 && newNodeMap == 0)
+        return (node: ChampEmptyNode<K, V>(), didRemove: true);
+      // Create new node (will be Sparse or simpler)
+      final newNode = _createImmutableNode(dataMap, newNodeMap, newChildren);
+      return (node: newNode, didRemove: true);
+    } else if (removeResult.node is ChampDataNode<K, V>) {
+      // Replace node entry with data entry
+      final dataNode = removeResult.node as ChampDataNode<K, V>;
+      final newDataMap = dataMap | bitpos;
+      final newNodeMap = nodeMap ^ bitpos;
+      final dataPayloadIndex = dataIndexFromFragment(frag, newDataMap) * 2;
+
+      // Create new content list: copy old data, insert new data, copy old nodes (excluding replaced one)
+      final newDataCount = bitCount(newDataMap);
+      final newNodeCount = bitCount(newNodeMap);
+      final newChildrenList = List<Object?>.filled(
+        newDataCount * 2 + newNodeCount,
+        null,
+      );
+
+      // Copy data before insertion point
+      if (dataPayloadIndex > 0)
+        newChildrenList.setRange(0, dataPayloadIndex, children, 0);
+      // Insert new data
+      newChildrenList[dataPayloadIndex] = dataNode.dataKey;
+      newChildrenList[dataPayloadIndex + 1] = dataNode.dataValue;
+      // Copy data after insertion point
+      final oldDataEnd = bitCount(dataMap) * 2;
+      if (dataPayloadIndex < oldDataEnd) {
+        newChildrenList.setRange(
+          dataPayloadIndex + 2,
+          newDataCount * 2,
+          children,
+          dataPayloadIndex,
+        );
+      }
+
+      // Copy nodes before removed node
+      final oldNodeStartIndex = bitCount(dataMap) * 2;
+      final newNodeStartIndex = newDataCount * 2;
+      if (nodeIndex > 0) {
+        newChildrenList.setRange(
+          newNodeStartIndex,
+          newNodeStartIndex + nodeIndex,
+          children,
+          oldNodeStartIndex,
+        );
+      }
+      // Copy nodes after removed node
+      if (nodeIndex < bitCount(nodeMap) - 1) {
+        newChildrenList.setRange(
+          newNodeStartIndex + nodeIndex,
+          newNodeStartIndex + newNodeCount,
+          children,
+          oldNodeStartIndex + nodeIndex + 1,
+        );
+      }
+
+      // Create new node (will be Sparse or simpler)
+      final newNode = _createImmutableNode(
+        newDataMap,
+        newNodeMap,
+        newChildrenList,
+      );
+      return (node: newNode, didRemove: true);
+    }
+    // Sub-node modified but not removed/collapsed, stays Sparse
+    return (
+      node: ChampSparseNode<K, V>(dataMap, nodeMap, newChildren),
+      didRemove: true,
+    );
+  }
+
+  // --- Transient Update Helpers (SparseNode) ---
+
+  ChampUpdateResult<K, V> _updateTransientData(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    V Function(V value) updateFn,
+    V Function()? ifAbsentFn,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final currentKey = children[payloadIndex] as K;
+
+    if (currentKey == key) {
+      // Found key, update value in place
+      final currentValue = children[payloadIndex + 1] as V;
+      final updatedValue = updateFn(currentValue);
+      if (identical(updatedValue, currentValue))
+        return (node: this, sizeChanged: false);
+      children[payloadIndex + 1] = updatedValue; // Mutate value in place
+      return (node: this, sizeChanged: false);
+    } else {
+      // Hash collision, different keys
+      if (ifAbsentFn != null) {
+        // Convert existing data entry + new entry into a sub-node
+        final newValue = ifAbsentFn();
+        final currentVal = children[payloadIndex + 1] as V;
+        final subNode = mergeDataEntries(
+          shift + kBitPartitionSize,
+          hashOfKey(currentKey),
+          currentKey,
+          currentVal,
+          hash,
+          key,
+          newValue,
+          owner,
+        );
+        _replaceDataWithNodeInPlace(
+          dataIndex,
+          subNode,
+          bitpos,
+        ); // Mutate in place
+        // No transition check needed here, count doesn't change
+        return (node: this, sizeChanged: true);
+      } else {
+        // Key not found, no ifAbsentFn
+        return (node: this, sizeChanged: false);
+      }
+    }
+  }
+
+  ChampUpdateResult<K, V> _updateTransientDelegate(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    V Function(V value) updateFn,
+    V Function()? ifAbsentFn,
+    TransientOwner owner,
+  ) {
+    assert(isTransient(owner));
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+
+    // Recursively update the sub-node
+    final updateResult = subNode.update(
+      key,
+      hash,
+      shift + kBitPartitionSize,
+      updateFn,
+      ifAbsentFn: ifAbsentFn,
+      owner: owner,
+    );
+
+    if (identical(updateResult.node, subNode))
+      return (node: this, sizeChanged: updateResult.sizeChanged);
+
+    // Update children array in place
+    children[contentIdx] = updateResult.node;
+    // No transition check needed here, count doesn't change relative to this node
+    return (node: this, sizeChanged: updateResult.sizeChanged);
+  }
+
+  ChampUpdateResult<K, V> _updateTransientEmptySlot(
+    K key,
+    int frag,
+    int bitpos,
+    V Function()? ifAbsentFn,
+    TransientOwner owner, // Added owner
+  ) {
+    assert(isTransient(owner)); // Use owner
+    if (ifAbsentFn != null) {
+      // Insert new data entry using ifAbsentFn (in place)
+      final newValue = ifAbsentFn();
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      _insertDataEntryInPlace(
+        dataIndex,
+        key,
+        newValue,
+        bitpos,
+      ); // Mutate in place
+
+      // Check for transition Sparse -> Array
+      if (childCount > kSparseNodeThreshold) {
+        // Create ArrayNode, passing the current mutable children list and owner
+        return (
+          node: ChampArrayNode<K, V>(dataMap, nodeMap, children, owner),
+          sizeChanged: true,
+        );
+      }
+      // Remain SparseNode
+      return (node: this, sizeChanged: true);
+    } else {
+      // Key not found, no ifAbsentFn
+      return (node: this, sizeChanged: false);
+    }
+  }
+
+  // --- Immutable Update Helpers (SparseNode) ---
+
+  ChampUpdateResult<K, V> _updateImmutableData(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    V Function(V value) updateFn,
+    V Function()? ifAbsentFn,
+  ) {
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
+    final currentKey = children[payloadIndex] as K;
+
+    if (currentKey == key) {
+      // Found key, update value
+      final currentValue = children[payloadIndex + 1] as V;
+      final updatedValue = updateFn(currentValue);
+      if (identical(updatedValue, currentValue))
+        return (node: this, sizeChanged: false);
+      // Create new node with updated value (Manual Copy Optimization)
+      final len = children.length;
+      final newChildren = List<Object?>.filled(len, null);
+      for (int i = 0; i < len; i++) {
+        newChildren[i] = children[i];
+      }
+      newChildren[payloadIndex + 1] = updatedValue; // Update the specific value
+      // Count doesn't change, stays SparseNode
+      return (
+        node: ChampSparseNode<K, V>(dataMap, nodeMap, newChildren),
+        sizeChanged: false,
+      );
+    } else {
+      // Hash collision, different keys
+      if (ifAbsentFn != null) {
+        // Convert existing data entry + new entry into a sub-node
+        final newValue = ifAbsentFn();
+        final currentVal = children[payloadIndex + 1] as V;
+        final subNode = mergeDataEntries(
+          shift + kBitPartitionSize,
+          hashOfKey(currentKey),
+          currentKey,
+          currentVal,
+          hash,
+          key,
+          newValue,
+          null, // Immutable merge
+        );
+        // Create new node replacing data with sub-node
+        final newNode = _replaceDataWithNodeImmutable(
+          dataIndex,
+          subNode,
+          bitpos,
+        );
+        return (node: newNode, sizeChanged: true);
+      } else {
+        // Key not found, no ifAbsentFn
+        return (node: this, sizeChanged: false);
+      }
+    }
+  }
+
+  ChampUpdateResult<K, V> _updateImmutableDelegate(
+    K key,
+    int hash,
+    int shift,
+    int frag,
+    int bitpos,
+    V Function(V value) updateFn,
+    V Function()? ifAbsentFn,
+  ) {
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    final subNode = children[contentIdx] as ChampNode<K, V>;
+
+    // Recursively update the sub-node
+    final updateResult = subNode.update(
+      key,
+      hash,
+      shift + kBitPartitionSize,
+      updateFn,
+      ifAbsentFn: ifAbsentFn,
+      owner: null,
+    );
+
+    if (identical(updateResult.node, subNode))
+      return (node: this, sizeChanged: updateResult.sizeChanged);
+
+    // Create new children list with updated sub-node
+    final newChildren = List<Object?>.of(children);
+    newChildren[contentIdx] = updateResult.node;
+    // Count doesn't change, stays SparseNode
+    return (
+      node: ChampSparseNode<K, V>(dataMap, nodeMap, newChildren),
+      sizeChanged: updateResult.sizeChanged,
+    );
+  }
+
+  ChampUpdateResult<K, V> _updateImmutableEmptySlot(
+    K key,
+    int frag,
+    int bitpos,
+    V Function()? ifAbsentFn,
+  ) {
+    if (ifAbsentFn != null) {
+      // Insert new data entry using ifAbsentFn
+      final newValue = ifAbsentFn();
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = dataIndex * 2;
+      // Create new children list with inserted entry
+      final newChildren = List<Object?>.of(children)
+        ..insertAll(payloadIndex, [key, newValue]);
+      final newDataMap = dataMap | bitpos;
+      final newChildCount = childCount + 1; // Calculate new count
+
+      // Check for transition Sparse -> Array
+      if (newChildCount > kSparseNodeThreshold) {
+        return (
+          node: ChampArrayNode<K, V>(newDataMap, nodeMap, newChildren),
+          sizeChanged: true,
+        );
+      } else {
+        return (
+          node: ChampSparseNode<K, V>(newDataMap, nodeMap, newChildren),
+          sizeChanged: true,
+        );
+      }
+    } else {
+      // Key not found, no ifAbsentFn
+      return (node: this, sizeChanged: false);
+    }
+  }
+
+  // Implement abstract methods from ChampNode/ChampBitmapNode
   @override
   V? get(K key, int hash, int shift) {
     final frag = indexFragment(shift, hash);
     final bitpos = 1 << frag;
 
     if ((dataMap & bitpos) != 0) {
-      // Check data entries first
-      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-      final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-        dataIndex,
-      );
-      // Check if the key matches
-      if (content[payloadIndex] == key) {
-        return content[payloadIndex + 1] as V;
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      if (children[payloadIndex] == key) {
+        return children[payloadIndex + 1] as V;
       }
-      return null; // Hash fragment collision, but different key
+      return null;
     } else if ((nodeMap & bitpos) != 0) {
-      // Check sub-nodes
-      final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-      final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-        nodeIndex,
-        dataMap,
-      );
-      final subNode = content[contentIdx] as ChampNode<K, V>;
-      // Recursively search in the sub-node
+      final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+      final subNode = children[contentIdx] as ChampNode<K, V>;
       return subNode.get(key, hash, shift + kBitPartitionSize);
     }
-
-    return null; // Not found in this branch
+    return null;
   }
 
   @override
@@ -784,26 +1685,16 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final bitpos = 1 << frag;
 
     if ((dataMap & bitpos) != 0) {
-      // Check data entries first
-      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-      final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-        dataIndex,
-      );
-      // Check if the key matches
-      return content[payloadIndex] == key;
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      return children[payloadIndex] == key;
     } else if ((nodeMap & bitpos) != 0) {
-      // Check sub-nodes
-      final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-      final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-        nodeIndex,
-        dataMap,
-      );
-      final subNode = content[contentIdx] as ChampNode<K, V>;
-      // Recursively search in the sub-node
+      final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+      final subNode = children[contentIdx] as ChampNode<K, V>;
       return subNode.containsKey(key, hash, shift + kBitPartitionSize);
     }
-
-    return false; // Not found in this branch
+    return false;
   }
 
   @override
@@ -817,31 +1708,30 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final frag = indexFragment(shift, hash);
     final bitpos = 1 << frag;
 
-    if (owner != null) {
+    if (isTransient(owner)) {
       // --- Transient Path ---
-      final mutableNode = ensureMutable(owner); // Ensure this node is mutable
-      if ((mutableNode.dataMap & bitpos) != 0) {
-        return mutableNode._addTransientDataCollision(
+      if ((dataMap & bitpos) != 0) {
+        return _addTransientDataCollision(
           key,
           value,
           hash,
           shift,
           frag,
           bitpos,
-          owner,
+          owner!,
         );
-      } else if ((mutableNode.nodeMap & bitpos) != 0) {
-        return mutableNode._addTransientDelegate(
+      } else if ((nodeMap & bitpos) != 0) {
+        return _addTransientDelegate(
           key,
           value,
           hash,
           shift,
           frag,
           bitpos,
-          owner,
+          owner!,
         );
       } else {
-        return mutableNode._addTransientEmptySlot(key, value, frag, bitpos);
+        return _addTransientEmptySlot(key, value, frag, bitpos, owner!);
       }
     } else {
       // --- Immutable Path ---
@@ -872,32 +1762,22 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final frag = indexFragment(shift, hash);
     final bitpos = 1 << frag;
 
-    if (owner != null) {
+    if (isTransient(owner)) {
       // --- Transient Path ---
-      final mutableNode = ensureMutable(owner);
-      if ((mutableNode.dataMap & bitpos) != 0) {
-        return mutableNode._removeTransientData(key, frag, bitpos, owner);
-      } else if ((mutableNode.nodeMap & bitpos) != 0) {
-        return mutableNode._removeTransientDelegate(
-          key,
-          hash,
-          shift,
-          frag,
-          bitpos,
-          owner,
-        );
-      } else {
-        return (node: mutableNode, didRemove: false); // Not found
+      if ((dataMap & bitpos) != 0) {
+        return _removeTransientData(key, frag, bitpos, owner!);
+      } else if ((nodeMap & bitpos) != 0) {
+        return _removeTransientDelegate(key, hash, shift, frag, bitpos, owner!);
       }
+      return (node: this, didRemove: false); // Key not found
     } else {
       // --- Immutable Path ---
       if ((dataMap & bitpos) != 0) {
         return _removeImmutableData(key, frag, bitpos);
       } else if ((nodeMap & bitpos) != 0) {
         return _removeImmutableDelegate(key, hash, shift, frag, bitpos);
-      } else {
-        return (node: this, didRemove: false); // Not found
       }
+      return (node: this, didRemove: false); // Key not found
     }
   }
 
@@ -913,11 +1793,10 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     final frag = indexFragment(shift, hash);
     final bitpos = 1 << frag;
 
-    if (owner != null) {
+    if (isTransient(owner)) {
       // --- Transient Path ---
-      final mutableNode = ensureMutable(owner);
-      if ((mutableNode.dataMap & bitpos) != 0) {
-        return mutableNode._updateTransientData(
+      if ((dataMap & bitpos) != 0) {
+        return _updateTransientData(
           key,
           hash,
           shift,
@@ -925,10 +1804,10 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           bitpos,
           updateFn,
           ifAbsentFn,
-          owner,
+          owner!,
         );
-      } else if ((mutableNode.nodeMap & bitpos) != 0) {
-        return mutableNode._updateTransientDelegate(
+      } else if ((nodeMap & bitpos) != 0) {
+        return _updateTransientDelegate(
           key,
           hash,
           shift,
@@ -936,15 +1815,10 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           bitpos,
           updateFn,
           ifAbsentFn,
-          owner,
+          owner!,
         );
       } else {
-        return mutableNode._updateTransientEmptySlot(
-          key,
-          frag,
-          bitpos,
-          ifAbsentFn,
-        );
+        return _updateTransientEmptySlot(key, frag, bitpos, ifAbsentFn, owner!);
       }
     } else {
       // --- Immutable Path ---
@@ -974,8 +1848,518 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
   }
 
-  // --- Transient Add Helpers ---
+  @override
+  ChampNode<K, V> freeze(TransientOwner? owner) {
+    if (isTransient(owner)) {
+      final nodeCount = bitCount(nodeMap);
+      final dataSlots = bitCount(dataMap) * 2;
+      for (int i = 0; i < nodeCount; i++) {
+        final nodeIndex = dataSlots + i;
+        final subNode = children[nodeIndex] as ChampNode<K, V>;
+        children[nodeIndex] = subNode.freeze(owner); // Freeze recursively
+      }
+      this._owner = null;
+      this.children = List.unmodifiable(children); // Make list unmodifiable
+      return this;
+    }
+    return this; // Already immutable or not owned
+  }
 
+  @override
+  ChampBitmapNode<K, V> ensureMutable(TransientOwner? owner) {
+    if (isTransient(owner)) {
+      return this;
+    }
+    // Create a mutable copy with the new owner
+    return ChampSparseNode<K, V>(
+      dataMap,
+      nodeMap,
+      List.of(children, growable: true), // Create mutable copy
+      owner,
+    );
+  }
+} // End of ChampSparseNode
+
+// --- Array Node Implementation ---
+// (This was missing and caused the errors)
+class ChampArrayNode<K, V> extends ChampBitmapNode<K, V> {
+  List<Object?> content; // Use 'content' for ArrayNode
+
+  ChampArrayNode(
+    int dataMap,
+    int nodeMap,
+    List<Object?> content, [
+    TransientOwner? owner,
+  ]) : content = (owner != null) ? content : List.unmodifiable(content),
+       assert(bitCount(dataMap) + bitCount(nodeMap) > kSparseNodeThreshold),
+       assert(content.length == bitCount(dataMap) * 2 + bitCount(nodeMap)),
+       super(dataMap, nodeMap, owner);
+
+  // --- In-place mutation helpers (ArrayNode) ---
+
+  /// Inserts a data entry into the `content` list. Updates `dataMap`. Assumes transient.
+  void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    content.insertAll(dataPayloadIndex, [key, value]);
+    dataMap |= bitpos;
+  }
+
+  /// Removes a data entry from the `content` list. Updates `dataMap`. Assumes transient.
+  void _removeDataEntryInPlace(int dataIndex, int bitpos) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
+    dataMap ^= bitpos;
+  }
+
+  /// Removes a child node entry from the `content` list. Updates `nodeMap`. Assumes transient.
+  void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
+    assert(isTransient(_owner));
+    final contentNodeIndex = contentIndexFromNodeIndex(nodeIndex, dataMap);
+    content.removeAt(contentNodeIndex);
+    nodeMap ^= bitpos;
+  }
+
+  /// Replaces a data entry with a sub-node in place. Updates bitmaps. Assumes transient.
+  void _replaceDataWithNodeInPlace(
+    int dataIndex,
+    ChampNode<K, V> subNode,
+    int bitpos,
+  ) {
+    assert(isTransient(_owner));
+    final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
+    final frag = bitCount(bitpos - 1); // Fragment index of the new node
+    final targetNodeMap =
+        nodeMap | bitpos; // Node map *after* adding the new node bit
+    final targetNodeIndex = bitCount(
+      targetNodeMap & (bitpos - 1),
+    ); // Nodes before the new one
+    // Node section starts after remaining data entries
+    final nodeInsertPos = (bitCount(dataMap) - 1) * 2 + targetNodeIndex;
+
+    // Modify content list
+    content.removeRange(
+      dataPayloadIndex,
+      dataPayloadIndex + 2,
+    ); // Remove old data
+    if (nodeInsertPos > content.length) {
+      content.add(subNode); // Append if at the end
+    } else {
+      content.insert(nodeInsertPos, subNode); // Insert in the middle
+    }
+
+    // Update bitmaps
+    dataMap ^= bitpos; // Remove data bit
+    nodeMap |= bitpos; // Add node bit
+  }
+
+  /// Replaces a node entry with a data entry in place. Updates bitmaps. Assumes transient.
+  void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
+    assert(isTransient(_owner));
+    final frag = bitCount(bitpos - 1); // Fragment for the new data
+    final targetDataMap =
+        dataMap | bitpos; // dataMap *after* adding the new data bit
+    final targetDataIndex = dataIndexFromFragment(frag, targetDataMap);
+    final dataPayloadIndex = contentIndexFromDataIndex(targetDataIndex);
+    final nodeContentIndex = contentIndexFromNodeIndex(
+      nodeIndex,
+      dataMap,
+    ); // Index of node to remove
+
+    // Remove the node entry
+    content.removeAt(nodeContentIndex);
+    // Insert the data entry (key, value) at the correct position
+    content.insertAll(dataPayloadIndex, [key, value]);
+
+    // Update bitmaps
+    dataMap |= bitpos; // Add data bit
+    nodeMap ^= bitpos; // Remove node bit
+  }
+
+  /// Checks if the node needs shrinking or transitioning after a removal and performs it (in place).
+  /// Returns the potentially new node (e.g., if collapsed or transitioned).
+  /// Assumes the node is transient and owned.
+  ChampNode<K, V>? _shrinkOrTransitionIfNeeded(TransientOwner? owner) {
+    assert(isTransient(owner)); // Should only be called transiently
+
+    final currentChildCount = childCount;
+
+    // Condition 1: Collapse to EmptyNode
+    if (currentChildCount == 0) {
+      assert(dataMap == 0 && nodeMap == 0);
+      return ChampEmptyNode<K, V>();
+    }
+
+    // Condition 2: Collapse to DataNode
+    if (currentChildCount == 1 && nodeMap == 0) {
+      assert(bitCount(dataMap) == 1);
+      final key = content[0] as K; // Use 'content'
+      final value = content[1] as V; // Use 'content'
+      return ChampDataNode<K, V>(
+        hashOfKey(key),
+        key,
+        value,
+      ); // Return immutable DataNode
+    }
+
+    // Condition 3: Collapse to single sub-node
+    if (currentChildCount == 1 && dataMap == 0) {
+      assert(bitCount(nodeMap) == 1);
+      return content[0]
+          as ChampNode<K, V>; // Return the sub-node from 'content'
+    }
+
+    // Condition 4: Transition from ArrayNode to SparseNode
+    if (currentChildCount <= kSparseNodeThreshold) {
+      // Convert this ArrayNode content to a SparseNode
+      return ChampSparseNode<K, V>(
+        dataMap,
+        nodeMap,
+        content, // Pass the existing (mutable) list
+        owner, // Keep the owner
+      );
+    }
+
+    // No shrinking or transition needed, return this (mutable) ArrayNode
+    return this;
+  }
+
+  // --- Immutable Helper (ArrayNode) ---
+
+  /// Creates a new node replacing a data entry with a sub-node immutably.
+  /// Handles potential transition to SparseNode.
+  ChampNode<K, V> _replaceDataWithNodeImmutable(
+    int dataIndex,
+    ChampNode<K, V> subNode,
+    int bitpos,
+  ) {
+    final dataPayloadIndex = dataIndex * 2;
+    final dataCount = bitCount(dataMap);
+    final nodeCount = bitCount(nodeMap);
+    final newChildCount =
+        (dataCount - 1) + (nodeCount + 1); // Calculate new count
+    final newNodeStartIndex =
+        (dataCount - 1) * 2; // Start index for nodes in new list
+
+    // Create the new content list
+    final newContent = List<Object?>.filled(
+      newNodeStartIndex + (nodeCount + 1),
+      null,
+      growable: false,
+    );
+
+    // --- Copy elements into newContent ---
+    // Copy data before the replaced entry
+    if (dataIndex > 0) newContent.setRange(0, dataPayloadIndex, content, 0);
+    // Copy data after the replaced entry
+    if (dataIndex < dataCount - 1) {
+      newContent.setRange(
+        dataPayloadIndex,
+        newNodeStartIndex,
+        content,
+        dataPayloadIndex + 2,
+      );
+    }
+
+    // Calculate insertion position for the new subNode
+    final frag = bitCount(bitpos - 1);
+    final targetNodeMap = nodeMap | bitpos;
+    final targetNodeIndex = bitCount(targetNodeMap & (bitpos - 1));
+    final nodeInsertPos = newNodeStartIndex + targetNodeIndex;
+
+    // Copy existing nodes around the insertion point
+    if (nodeCount > 0) {
+      final oldNodeStartIndex = dataCount * 2;
+      // Copy nodes before insertion point
+      if (targetNodeIndex > 0) {
+        newContent.setRange(
+          newNodeStartIndex,
+          nodeInsertPos,
+          content,
+          oldNodeStartIndex,
+        );
+      }
+      // Copy nodes after insertion point
+      if (targetNodeIndex < nodeCount) {
+        newContent.setRange(
+          nodeInsertPos + 1,
+          newContent.length,
+          content,
+          oldNodeStartIndex + targetNodeIndex,
+        );
+      }
+    }
+    // Insert the new subNode
+    newContent[nodeInsertPos] = subNode;
+    // --- End Copy ---
+
+    final newDataMap = dataMap ^ bitpos; // Remove data bit
+    final newNodeMap = nodeMap | bitpos; // Add node bit
+
+    // Decide if new node should be Sparse or Array based on the *new* count
+    return _createImmutableNode(newDataMap, newNodeMap, newContent);
+  }
+
+  /// Helper to create the correct immutable node type (Sparse, Array, Data, Empty)
+  /// based on the final child count after an immutable operation.
+  /// Assumes the caller has already calculated the final bitmaps and content.
+  ChampNode<K, V> _createImmutableNode(
+    int newDataMap,
+    int newNodeMap,
+    List<Object?> newContent,
+  ) {
+    final childCount = bitCount(newDataMap) + bitCount(newNodeMap);
+
+    if (childCount == 0) return ChampEmptyNode<K, V>();
+
+    if (childCount == 1) {
+      if (bitCount(newDataMap) == 1) {
+        // Collapse to DataNode
+        final key = newContent[0] as K;
+        final value = newContent[1] as V;
+        return ChampDataNode<K, V>(hashOfKey(key), key, value);
+      } else {
+        // Collapse to single sub-node (return the sub-node directly)
+        return newContent[0] as ChampNode<K, V>;
+      }
+    }
+
+    // Check threshold *before* creating node
+    if (childCount <= kSparseNodeThreshold) {
+      // Transition to SparseNode
+      return ChampSparseNode<K, V>(newDataMap, newNodeMap, newContent);
+    } else {
+      // Stay ArrayNode
+      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newContent);
+    }
+  }
+
+  // --- Implement abstract methods from ChampNode/ChampBitmapNode ---
+  @override
+  V? get(K key, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      if (content[payloadIndex] == key) {
+        // Use 'content'
+        return content[payloadIndex + 1] as V; // Use 'content'
+      }
+      return null;
+    } else if ((nodeMap & bitpos) != 0) {
+      final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+      final subNode = content[contentIdx] as ChampNode<K, V>; // Use 'content'
+      return subNode.get(key, hash, shift + kBitPartitionSize);
+    }
+    return null;
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if ((dataMap & bitpos) != 0) {
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
+      final payloadIndex = contentIndexFromDataIndex(dataIndex);
+      return content[payloadIndex] == key; // Use 'content'
+    } else if ((nodeMap & bitpos) != 0) {
+      final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+      final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
+      final subNode = content[contentIdx] as ChampNode<K, V>; // Use 'content'
+      return subNode.containsKey(key, hash, shift + kBitPartitionSize);
+    }
+    return false;
+  }
+
+  @override
+  ChampAddResult<K, V> add(
+    K key,
+    V value,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if (isTransient(owner)) {
+      // --- Transient Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _addTransientDataCollision(
+          key,
+          value,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          owner!,
+        );
+      } else if ((nodeMap & bitpos) != 0) {
+        return _addTransientDelegate(
+          key,
+          value,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          owner!,
+        );
+      } else {
+        return _addTransientEmptySlot(key, value, frag, bitpos);
+      }
+    } else {
+      // --- Immutable Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _addImmutableDataCollision(
+          key,
+          value,
+          hash,
+          shift,
+          frag,
+          bitpos,
+        );
+      } else if ((nodeMap & bitpos) != 0) {
+        return _addImmutableDelegate(key, value, hash, shift, frag, bitpos);
+      } else {
+        return _addImmutableEmptySlot(key, value, frag, bitpos);
+      }
+    }
+  }
+
+  @override
+  ChampRemoveResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if (isTransient(owner)) {
+      // --- Transient Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _removeTransientData(key, frag, bitpos, owner!);
+      } else if ((nodeMap & bitpos) != 0) {
+        return _removeTransientDelegate(key, hash, shift, frag, bitpos, owner!);
+      }
+      return (node: this, didRemove: false); // Key not found
+    } else {
+      // --- Immutable Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _removeImmutableData(key, frag, bitpos);
+      } else if ((nodeMap & bitpos) != 0) {
+        return _removeImmutableDelegate(key, hash, shift, frag, bitpos);
+      }
+      return (node: this, didRemove: false); // Key not found
+    }
+  }
+
+  @override
+  ChampUpdateResult<K, V> update(
+    K key,
+    int hash,
+    int shift,
+    V Function(V value) updateFn, {
+    V Function()? ifAbsentFn,
+    TransientOwner? owner,
+  }) {
+    final frag = indexFragment(shift, hash);
+    final bitpos = 1 << frag;
+
+    if (isTransient(owner)) {
+      // --- Transient Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _updateTransientData(
+          key,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          updateFn,
+          ifAbsentFn,
+          owner!,
+        );
+      } else if ((nodeMap & bitpos) != 0) {
+        return _updateTransientDelegate(
+          key,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          updateFn,
+          ifAbsentFn,
+          owner!,
+        );
+      } else {
+        return _updateTransientEmptySlot(key, frag, bitpos, ifAbsentFn);
+      }
+    } else {
+      // --- Immutable Path ---
+      if ((dataMap & bitpos) != 0) {
+        return _updateImmutableData(
+          key,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          updateFn,
+          ifAbsentFn,
+        );
+      } else if ((nodeMap & bitpos) != 0) {
+        return _updateImmutableDelegate(
+          key,
+          hash,
+          shift,
+          frag,
+          bitpos,
+          updateFn,
+          ifAbsentFn,
+        );
+      } else {
+        return _updateImmutableEmptySlot(key, frag, bitpos, ifAbsentFn);
+      }
+    }
+  }
+
+  @override
+  ChampNode<K, V> freeze(TransientOwner? owner) {
+    if (isTransient(owner)) {
+      final nodeCount = bitCount(nodeMap);
+      final dataSlots = bitCount(dataMap) * 2;
+      for (int i = 0; i < nodeCount; i++) {
+        final nodeIndex = dataSlots + i;
+        final subNode = content[nodeIndex] as ChampNode<K, V>; // Use 'content'
+        content[nodeIndex] = subNode.freeze(owner); // Freeze recursively
+      }
+      this._owner = null;
+      this.content = List.unmodifiable(content); // Make list unmodifiable
+      return this;
+    }
+    return this;
+  }
+
+  @override
+  ChampBitmapNode<K, V> ensureMutable(TransientOwner? owner) {
+    if (isTransient(owner)) {
+      return this;
+    }
+    return ChampArrayNode<K, V>(
+      // Return ArrayNode
+      dataMap,
+      nodeMap,
+      List.of(content, growable: true), // Create mutable copy of 'content'
+      owner,
+    );
+  }
+
+  // --- Transient Add Helpers (ArrayNode) ---
+  // (These were previously misplaced inside SparseNode)
   ChampAddResult<K, V> _addTransientDataCollision(
     K key,
     V value,
@@ -986,18 +2370,16 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
     final currentValue = content[payloadIndex + 1] as V;
 
     if (currentKey == key) {
-      // Update existing key
       if (currentValue == value) return (node: this, didAdd: false);
       content[payloadIndex + 1] = value; // Mutate in place
       return (node: this, didAdd: false);
     } else {
-      // Hash collision, different keys -> create sub-node
       final subNode = mergeDataEntries(
         shift + kBitPartitionSize,
         hashOfKey(currentKey),
@@ -1006,7 +2388,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         hash,
         key,
         value,
-        owner, // Pass owner for potentially transient merge
+        owner,
       );
       _replaceDataWithNodeInPlace(
         dataIndex,
@@ -1027,11 +2409,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final addResult = subNode.add(
       key,
@@ -1039,7 +2418,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       hash,
       shift + kBitPartitionSize,
       owner,
-    ); // Pass owner
+    );
 
     if (identical(addResult.node, subNode))
       return (node: this, didAdd: addResult.didAdd);
@@ -1055,15 +2434,14 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int bitpos,
   ) {
     assert(isTransient(_owner));
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
     _insertDataEntryInPlace(dataIndex, key, value, bitpos); // Mutate in place
+    // ArrayNode never transitions back to Sparse on add
     return (node: this, didAdd: true);
   }
 
-  // --- Immutable Add Helpers ---
+  // --- Immutable Add Helpers (ArrayNode) ---
 
-  /// Handles adding a key/value pair immutably when the target fragment
-  /// currently holds a data entry (potential collision or update).
   ChampAddResult<K, V> _addImmutableDataCollision(
     K key,
     V value,
@@ -1072,21 +2450,22 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
     final currentValue = content[payloadIndex + 1] as V;
 
     if (currentKey == key) {
-      // Update existing key
-      if (currentValue == value) {
-        return (node: this, didAdd: false); // No change
+      if (currentValue == value) return (node: this, didAdd: false);
+      // Create new content list with updated value (Manual Copy Optimization)
+      final len = content.length;
+      final newContent = List<Object?>.filled(len, null);
+      for (int i = 0; i < len; i++) {
+        newContent[i] = content[i];
       }
-      // Create new content list with updated value
-      final newContent = List<Object?>.of(content);
-      newContent[payloadIndex + 1] = value;
+      newContent[payloadIndex + 1] = value; // Update the specific value
       return (
-        node: ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
+        node: ChampArrayNode<K, V>(dataMap, nodeMap, newContent),
         didAdd: false,
       );
     } else {
@@ -1099,86 +2478,14 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         hash,
         key,
         value,
-        null, // Pass null owner for immutable merge
+        null, // Immutable merge
       );
-
-      // Create new node replacing data with sub-node (Explicit list manipulation logic)
-      final dataPayloadIndex = dataIndex * 2;
-      final dataCount = bitCount(dataMap);
-      final nodeCount = bitCount(nodeMap);
-      final newNodeStartIndex =
-          (dataCount - 1) * 2; // Start index for nodes in newContent
-
-      // Create the new content list
-      final newContent = List<Object?>.filled(
-        newNodeStartIndex + (nodeCount + 1), // (data-1)*2 + (nodes+1)
-        null,
-        growable: false,
-      );
-
-      // Copy data before the replaced entry
-      if (dataIndex > 0) {
-        newContent.setRange(0, dataPayloadIndex, content, 0);
-      }
-      // Copy data after the replaced entry
-      if (dataIndex < dataCount - 1) {
-        newContent.setRange(
-          dataPayloadIndex, // Start index in newContent
-          newNodeStartIndex, // End index in newContent (end of data section)
-          content,
-          dataPayloadIndex +
-              2, // Start index in old content (after removed entry)
-        );
-      }
-
-      // Copy existing nodes before the insertion point for the new subNode
-      final targetNodeMap =
-          nodeMap | bitpos; // The final nodeMap after adding the bit
-      // final frag = bitCount(bitpos - 1); // Get fragment index (0-31) from bitpos - Already have frag
-      final targetNodeIndex = bitCount(
-        targetNodeMap & (bitpos - 1),
-      ); // Nodes before this one
-      final nodeInsertPos =
-          newNodeStartIndex + targetNodeIndex; // Actual index in newContent
-
-      if (nodeCount > 0) {
-        final oldNodeStartIndex = dataCount * 2;
-        // Copy nodes before insertion point
-        if (targetNodeIndex > 0) {
-          newContent.setRange(
-            newNodeStartIndex,
-            nodeInsertPos,
-            content,
-            oldNodeStartIndex,
-          );
-        }
-        // Copy nodes after insertion point
-        if (targetNodeIndex < nodeCount) {
-          newContent.setRange(
-            nodeInsertPos + 1, // Start after inserted node
-            newContent.length, // Go to end
-            content,
-            oldNodeStartIndex +
-                targetNodeIndex, // Start from original position of nodes after insertion point
-          );
-        }
-      }
-
-      // Insert the new subNode at the calculated position
-      newContent[nodeInsertPos] = subNode;
-
-      // Create and return the new immutable node
-      final newNode = ChampInternalNode<K, V>(
-        dataMap ^ bitpos, // Remove data bit
-        nodeMap | bitpos, // Add node bit
-        newContent,
-        null, // owner is null for immutable result
-      );
+      // Create new node replacing data with sub-node
+      final newNode = _replaceDataWithNodeImmutable(dataIndex, subNode, bitpos);
       return (node: newNode, didAdd: true);
     }
   }
 
-  /// Handles adding a key/value pair immutably by delegating to a sub-node.
   ChampAddResult<K, V> _addImmutableDelegate(
     K key,
     V value,
@@ -1187,34 +2494,28 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final addResult = subNode.add(
       key,
       value,
       hash,
       shift + kBitPartitionSize,
-      null, // Immutable operation
-    );
+      null,
+    ); // Immutable add
 
-    if (identical(addResult.node, subNode)) {
+    if (identical(addResult.node, subNode))
       return (node: this, didAdd: addResult.didAdd); // No change
-    }
 
-    // Create new content list using spreads to replace the sub-node
-    final newContent = [
-      ...content.sublist(0, contentIdx), // Elements before replacement
-      addResult.node, // The new sub-node
-      ...content.sublist(contentIdx + 1), // Elements after replacement
-    ];
-    final newNode = ChampInternalNode<K, V>(dataMap, nodeMap, newContent);
-
-    /// Handles adding a key/value pair immutably into an empty slot.
-    return (node: newNode, didAdd: addResult.didAdd);
+    // Create new content list with updated sub-node
+    final newContent = List<Object?>.of(content);
+    newContent[contentIdx] = addResult.node;
+    // Count doesn't change, stays ArrayNode
+    return (
+      node: ChampArrayNode<K, V>(dataMap, nodeMap, newContent),
+      didAdd: addResult.didAdd,
+    );
   }
 
   ChampAddResult<K, V> _addImmutableEmptySlot(
@@ -1223,24 +2524,18 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
     final payloadIndex = dataIndex * 2;
-    // Create new content list using spreads for insertion
-    final newContent = [
-      ...content.sublist(0, payloadIndex), // Elements before insertion
-      key,
-      value, // Inserted elements
-      ...content.sublist(payloadIndex), // Elements after insertion
-    ];
-    final newNode = ChampInternalNode<K, V>(
-      dataMap | bitpos,
-      nodeMap,
-      newContent,
-    );
+    // Create new content list with inserted entry
+    final newContent = List<Object?>.of(content)
+      ..insertAll(payloadIndex, [key, value]);
+    final newDataMap = dataMap | bitpos;
+    // Create new node (will remain ArrayNode as count increases)
+    final newNode = _createImmutableNode(newDataMap, nodeMap, newContent);
     return (node: newNode, didAdd: true);
   }
 
-  // --- Transient Remove Helpers ---
+  // --- Transient Remove Helpers (ArrayNode) ---
 
   ChampRemoveResult<K, V> _removeTransientData(
     K key,
@@ -1249,13 +2544,13 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     if (content[payloadIndex] == key) {
       // Found the key to remove
-      _removeDataEntryInPlace(dataIndex, bitpos);
-      // Check if node needs shrinking/collapsing
-      final newNode = _shrinkIfNeeded(owner);
+      _removeDataEntryInPlace(dataIndex, bitpos); // Mutate in place
+      // Check if node needs shrinking or transition Array -> Sparse
+      final newNode = _shrinkOrTransitionIfNeeded(owner);
       return (node: newNode ?? ChampEmptyNode<K, V>(), didRemove: true);
     }
     return (node: this, didRemove: false); // Key not found
@@ -1270,11 +2565,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final removeResult = subNode.remove(
       key,
@@ -1290,10 +2582,10 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 
     // Check if the sub-node became empty or needs merging
     if (removeResult.node.isEmptyNode) {
-      // Remove the empty sub-node entry
-      _removeNodeEntryInPlace(nodeIndex, bitpos);
-      // Check if this node needs shrinking
-      final newNode = _shrinkIfNeeded(owner);
+      _removeNodeEntryInPlace(nodeIndex, bitpos); // Mutate in place
+      final newNode = _shrinkOrTransitionIfNeeded(
+        owner,
+      ); // Check for collapse/transition
       return (node: newNode ?? ChampEmptyNode<K, V>(), didRemove: true);
     } else if (removeResult.node is ChampDataNode<K, V>) {
       // If sub-node collapsed to a data node, replace node entry with data entry
@@ -1303,39 +2595,39 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
         dataNode.dataKey,
         dataNode.dataValue,
         bitpos,
-      );
-      // No need to shrink here as content size didn't change
-      return (node: this, didRemove: true);
+      ); // Mutate in place
+      // Check if node needs shrinking or transition Array -> Sparse
+      final newNode = _shrinkOrTransitionIfNeeded(owner);
+      return (
+        node: newNode ?? this,
+        didRemove: true,
+      ); // Return potentially transitioned node
     }
     // Sub-node modified but not removed/collapsed, return mutable node
     return (node: this, didRemove: true);
   }
 
-  // --- Immutable Remove Helpers ---
+  // --- Immutable Remove Helpers (ArrayNode) ---
 
-  /// Handles removing a key immutably when the target fragment holds a data entry.
   ChampRemoveResult<K, V> _removeImmutableData(K key, int frag, int bitpos) {
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     if (content[payloadIndex] == key) {
       // Found the key to remove
-      // Create new node with data entry removed
       final newDataMap = dataMap ^ bitpos;
       if (newDataMap == 0 && nodeMap == 0)
         return (node: ChampEmptyNode<K, V>(), didRemove: true);
 
+      // Create new list with data entry removed
       final newContent = List<Object?>.of(content)
         ..removeRange(payloadIndex, payloadIndex + 2);
-      // TODO: Immutable shrink?
-      return (
-        node: ChampInternalNode<K, V>(newDataMap, nodeMap, newContent),
-        didRemove: true,
-      );
+      // Check for immutable shrink / transition
+      final newNode = _createImmutableNode(newDataMap, nodeMap, newContent);
+      return (node: newNode, didRemove: true);
     }
     return (node: this, didRemove: false); // Key not found
   }
 
-  /// Handles removing a key immutably by delegating to a sub-node.
   ChampRemoveResult<K, V> _removeImmutableDelegate(
     K key,
     int hash,
@@ -1343,18 +2635,15 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     int frag,
     int bitpos,
   ) {
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
     final removeResult = subNode.remove(
       key,
       hash,
       shift + kBitPartitionSize,
       null,
-    ); // No owner
+    ); // Immutable remove
 
     if (!removeResult.didRemove) return (node: this, didRemove: false);
 
@@ -1368,77 +2657,77 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       newContent.removeAt(contentIdx); // Remove from the copied list
       if (dataMap == 0 && newNodeMap == 0)
         return (node: ChampEmptyNode<K, V>(), didRemove: true);
-      // TODO: Immutable shrink?
-      return (
-        node: ChampInternalNode<K, V>(dataMap, newNodeMap, newContent),
-        didRemove: true,
-      );
+      // Check for immutable shrink / transition
+      final newNode = _createImmutableNode(dataMap, newNodeMap, newContent);
+      return (node: newNode, didRemove: true);
     } else if (removeResult.node is ChampDataNode<K, V>) {
       // Replace node entry with data entry
       final dataNode = removeResult.node as ChampDataNode<K, V>;
       final newDataMap = dataMap | bitpos;
       final newNodeMap = nodeMap ^ bitpos;
-      final dataPayloadIndex =
-          ChampInternalNode.dataIndexFromFragment(frag, newDataMap) *
-          2; // Index where new data goes in the *new* map
+      final dataPayloadIndex = dataIndexFromFragment(frag, newDataMap) * 2;
 
       // Create new content list: copy old data, insert new data, copy old nodes (excluding replaced one)
       final newDataCount = bitCount(newDataMap);
       final newNodeCount = bitCount(newNodeMap);
-      final newContentList = List<Object?>.filled(
+      final newChildrenList = List<Object?>.filled(
         newDataCount * 2 + newNodeCount,
         null,
       );
 
       // Copy data before insertion point
       if (dataPayloadIndex > 0)
-        newContentList.setRange(0, dataPayloadIndex, content, 0);
+        newChildrenList.setRange(0, dataPayloadIndex, content, 0);
       // Insert new data
-      newContentList[dataPayloadIndex] = dataNode.dataKey;
-      newContentList[dataPayloadIndex + 1] = dataNode.dataValue;
+      newChildrenList[dataPayloadIndex] = dataNode.dataKey;
+      newChildrenList[dataPayloadIndex + 1] = dataNode.dataValue;
       // Copy data after insertion point
       final oldDataEnd = bitCount(dataMap) * 2;
-      if (dataPayloadIndex < oldDataEnd)
-        newContentList.setRange(
+      if (dataPayloadIndex < oldDataEnd) {
+        newChildrenList.setRange(
           dataPayloadIndex + 2,
           newDataCount * 2,
           content,
           dataPayloadIndex,
         );
+      }
 
       // Copy nodes before removed node
-      final oldNodeStartIndex =
-          bitCount(dataMap) * 2; // Start of nodes in old content
+      final oldNodeStartIndex = bitCount(dataMap) * 2;
       final newNodeStartIndex = newDataCount * 2;
-      if (nodeIndex > 0)
-        newContentList.setRange(
+      if (nodeIndex > 0) {
+        newChildrenList.setRange(
           newNodeStartIndex,
           newNodeStartIndex + nodeIndex,
           content,
           oldNodeStartIndex,
         );
+      }
       // Copy nodes after removed node
-      if (nodeIndex < bitCount(nodeMap) - 1)
-        newContentList.setRange(
+      if (nodeIndex < bitCount(nodeMap) - 1) {
+        newChildrenList.setRange(
           newNodeStartIndex + nodeIndex,
           newNodeStartIndex + newNodeCount,
           content,
           oldNodeStartIndex + nodeIndex + 1,
         );
+      }
 
-      return (
-        node: ChampInternalNode<K, V>(newDataMap, newNodeMap, newContentList),
-        didRemove: true,
+      // Check for immutable shrink / transition
+      final newNode = _createImmutableNode(
+        newDataMap,
+        newNodeMap,
+        newChildrenList,
       );
+      return (node: newNode, didRemove: true);
     }
     // Sub-node modified but not removed/collapsed
-    return (
-      node: ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
-      didRemove: true,
-    );
+    // Check for immutable shrink / transition (count didn't change, but type might)
+    final newNode = _createImmutableNode(dataMap, nodeMap, newContent);
+    return (node: newNode, didRemove: true);
   }
 
-  // --- Transient Update Helpers ---
+  // --- Transient Update Helpers (ArrayNode) ---
 
   ChampUpdateResult<K, V> _updateTransientData(
     K key,
@@ -1451,30 +2740,24 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
 
     if (currentKey == key) {
       // Found key, update value in place
       final currentValue = content[payloadIndex + 1] as V;
       final updatedValue = updateFn(currentValue);
-      if (identical(updatedValue, currentValue)) {
-        return (node: this, sizeChanged: false); // Value didn't change
-      }
-      // Mutate value in place
-      content[payloadIndex + 1] = updatedValue;
-      return (
-        node: this,
-        sizeChanged: false,
-      ); // Return potentially mutated node
+      if (identical(updatedValue, currentValue))
+        return (node: this, sizeChanged: false);
+      content[payloadIndex + 1] = updatedValue; // Mutate value in place
+      return (node: this, sizeChanged: false);
     } else {
-      // Hash collision at this level, but keys differ
+      // Hash collision, different keys
       if (ifAbsentFn != null) {
-        // Convert existing data entry + new entry into a sub-node (collision or internal)
+        // Convert existing data entry + new entry into a sub-node
         final newValue = ifAbsentFn();
         final currentVal = content[payloadIndex + 1] as V;
-        // mergeDataEntries creates immutable nodes
         final subNode = mergeDataEntries(
           shift + kBitPartitionSize,
           hashOfKey(currentKey),
@@ -1483,10 +2766,13 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           hash,
           key,
           newValue,
-          owner, // Pass owner for potentially transient merge
+          owner,
         );
-        // Replace data entry with the new sub-node in place
-        _replaceDataWithNodeInPlace(dataIndex, subNode, bitpos);
+        _replaceDataWithNodeInPlace(
+          dataIndex,
+          subNode,
+          bitpos,
+        ); // Mutate in place
         return (node: this, sizeChanged: true);
       } else {
         // Key not found, no ifAbsentFn
@@ -1506,11 +2792,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     TransientOwner owner,
   ) {
     assert(isTransient(owner));
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
 
     // Recursively update the sub-node
@@ -1520,16 +2803,15 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       shift + kBitPartitionSize,
       updateFn,
       ifAbsentFn: ifAbsentFn,
-      owner: owner, // Pass owner down
+      owner: owner,
     );
 
-    // If sub-node didn't change identity, return original node
-    if (identical(updateResult.node, subNode)) {
+    if (identical(updateResult.node, subNode))
       return (node: this, sizeChanged: updateResult.sizeChanged);
-    }
 
-    // Update content array in place with the updated sub-node
+    // Update content array in place
     content[contentIdx] = updateResult.node;
+    // No transition check needed as count doesn't change relative to this node
     return (node: this, sizeChanged: updateResult.sizeChanged);
   }
 
@@ -1543,8 +2825,9 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     if (ifAbsentFn != null) {
       // Insert new data entry using ifAbsentFn (in place)
       final newValue = ifAbsentFn();
-      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
       _insertDataEntryInPlace(dataIndex, key, newValue, bitpos);
+      // ArrayNode never transitions back to Sparse on add/update
       return (node: this, sizeChanged: true);
     } else {
       // Key not found, no ifAbsentFn
@@ -1552,9 +2835,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
   }
 
-  // --- Immutable Update Helpers ---
+  // --- Immutable Update Helpers (ArrayNode) ---
 
-  /// Handles updating a key immutably when the target fragment holds a data entry.
   ChampUpdateResult<K, V> _updateImmutableData(
     K key,
     int hash,
@@ -1564,22 +2846,26 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     V Function(V value) updateFn,
     V Function()? ifAbsentFn,
   ) {
-    final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
-    final payloadIndex = ChampInternalNode.contentIndexFromDataIndex(dataIndex);
+    final dataIndex = dataIndexFromFragment(frag, dataMap);
+    final payloadIndex = contentIndexFromDataIndex(dataIndex);
     final currentKey = content[payloadIndex] as K;
 
     if (currentKey == key) {
       // Found key, update value
       final currentValue = content[payloadIndex + 1] as V;
       final updatedValue = updateFn(currentValue);
-      if (identical(updatedValue, currentValue)) {
-        return (node: this, sizeChanged: false); // Value didn't change
+      if (identical(updatedValue, currentValue))
+        return (node: this, sizeChanged: false);
+      // Create new node with updated value (Manual Copy Optimization)
+      final len = content.length;
+      final newContent = List<Object?>.filled(len, null);
+      for (int i = 0; i < len; i++) {
+        newContent[i] = content[i];
       }
-      // Create new node with updated value
-      final newContent = List<Object?>.of(content);
-      newContent[payloadIndex + 1] = updatedValue;
+      newContent[payloadIndex + 1] = updatedValue; // Update the specific value
+      // Count doesn't change, stays ArrayNode
       return (
-        node: ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
+        node: ChampArrayNode<K, V>(dataMap, nodeMap, newContent),
         sizeChanged: false,
       );
     } else {
@@ -1596,13 +2882,15 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
           hash,
           key,
           newValue,
-          null, // Pass null owner for immutable merge
+          null, // Immutable merge
         );
         // Create new node replacing data with sub-node
-        return (
-          node: _replaceDataWithNodeImmutable(dataIndex, subNode, bitpos),
-          sizeChanged: true,
+        final newNode = _replaceDataWithNodeImmutable(
+          dataIndex,
+          subNode,
+          bitpos,
         );
+        return (node: newNode, sizeChanged: true);
       } else {
         // Key not found, no ifAbsentFn
         return (node: this, sizeChanged: false);
@@ -1610,7 +2898,6 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     }
   }
 
-  /// Handles updating a key immutably by delegating to a sub-node.
   ChampUpdateResult<K, V> _updateImmutableDelegate(
     K key,
     int hash,
@@ -1620,11 +2907,8 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     V Function(V value) updateFn,
     V Function()? ifAbsentFn,
   ) {
-    final nodeIndex = ChampInternalNode.nodeIndexFromFragment(frag, nodeMap);
-    final contentIdx = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
+    final nodeIndex = nodeIndexFromFragment(frag, nodeMap);
+    final contentIdx = contentIndexFromNodeIndex(nodeIndex, dataMap);
     final subNode = content[contentIdx] as ChampNode<K, V>;
 
     // Recursively update the sub-node
@@ -1635,23 +2919,19 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
       updateFn,
       ifAbsentFn: ifAbsentFn,
       owner: null,
-    ); // No owner
+    );
 
-    // If sub-node didn't change identity, return original node
-    if (identical(updateResult.node, subNode)) {
+    if (identical(updateResult.node, subNode))
       return (node: this, sizeChanged: updateResult.sizeChanged);
-    }
 
     // Create new node with updated sub-node
     final newContent = List<Object?>.of(content);
     newContent[contentIdx] = updateResult.node;
-    return (
-      node: ChampInternalNode<K, V>(dataMap, nodeMap, newContent),
-      sizeChanged: updateResult.sizeChanged,
-    );
+    // Create new node (will remain ArrayNode as count doesn't change)
+    final newNode = _createImmutableNode(dataMap, nodeMap, newContent);
+    return (node: newNode, sizeChanged: updateResult.sizeChanged);
   }
 
-  /// Handles updating/inserting a key immutably into an empty slot.
   ChampUpdateResult<K, V> _updateImmutableEmptySlot(
     K key,
     int frag,
@@ -1661,286 +2941,26 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
     if (ifAbsentFn != null) {
       // Insert new data entry using ifAbsentFn
       final newValue = ifAbsentFn();
-      final dataIndex = ChampInternalNode.dataIndexFromFragment(frag, dataMap);
+      final dataIndex = dataIndexFromFragment(frag, dataMap);
       final newContent = List<Object?>.of(content)
         ..insertAll(dataIndex * 2, [key, newValue]);
-      return (
-        node: ChampInternalNode<K, V>(dataMap | bitpos, nodeMap, newContent),
-        sizeChanged: true,
+      // Create new node (will remain ArrayNode)
+      final newNode = _createImmutableNode(
+        dataMap | bitpos,
+        nodeMap,
+        newContent,
       );
+      return (node: newNode, sizeChanged: true);
     } else {
       // Key not found, no ifAbsentFn
       return (node: this, sizeChanged: false);
     }
   }
-
-  // --- Transient Helper Methods ---
-
-  /// Returns this node if it's mutable and owned by [owner],
-  /// otherwise returns a new mutable copy owned by [owner].
-  /// Used for transient operations.
-  ChampInternalNode<K, V> ensureMutable(TransientOwner? owner) {
-    if (isTransient(owner)) {
-      return this;
-    }
-    // Create a mutable copy with the new owner
-    return ChampInternalNode<K, V>(
-      dataMap,
-      nodeMap,
-      List<Object?>.of(
-        content,
-        growable: true,
-      ), // Create mutable GROWABLE list copy
-      owner, // Assign the new owner
-    );
-  }
-
-  @override
-  ChampNode<K, V> freeze(TransientOwner? owner) {
-    if (isTransient(owner)) {
-      // Freeze sub-nodes first
-      final nodeCount = bitCount(nodeMap);
-      final dataSlots = bitCount(dataMap) * 2;
-      for (int i = 0; i < nodeCount; i++) {
-        final nodeIndex = dataSlots + i;
-        final subNode = content[nodeIndex] as ChampNode<K, V>;
-        content[nodeIndex] = subNode.freeze(owner); // Freeze recursively
-      }
-      // If owned, become immutable by removing the owner
-      this._owner = null; // Use 'this._owner' to modify the instance field
-      /// Creates a new immutable node by replacing a data entry at [dataIndex]
-      /// with the given [subNode]. Used during immutable add/update operations
-      /// when a hash collision requires creating a deeper node.
-      ///
-      /// This involves complex list manipulation to rebuild the content array correctly.
-      // Content list reference remains the same, but node is now immutable.
-      // No need to copy with List.unmodifiable.
-      return this;
-    }
-    // If not owned or already immutable, return as is.
-    return this;
-  }
-
-  /// Immutable version of _replaceDataWithNodeInPlace.
-  /// Creates a new node with the data entry at dataIndex replaced by subNode.
-  ChampInternalNode<K, V> _replaceDataWithNodeImmutable(
-    int dataIndex,
-    ChampNode<K, V> subNode,
-    int bitpos,
-  ) {
-    final dataPayloadIndex = dataIndex * 2;
-    final dataCount = bitCount(dataMap);
-    final nodeCount = bitCount(nodeMap);
-
-    // Create the new content list
-    final newContent = List<Object?>.filled(
-      (dataCount - 1) * 2 + (nodeCount + 1), // (data-1)*2 + (nodes+1)
-      null,
-      growable: false, // Immutable result can be fixed-length
-    );
-
-    // Copy data before the replaced entry
-    if (dataIndex > 0) {
-      newContent.setRange(0, dataPayloadIndex, content, 0);
-    }
-    // Copy data after the replaced entry
-    if (dataIndex < dataCount - 1) {
-      newContent.setRange(
-        dataPayloadIndex, // Start index in newContent (after previous data)
-        (dataCount - 1) * 2, // End index in newContent (end of data section)
-        content,
-        dataPayloadIndex +
-            2, // Start index in old content (after removed entry)
-      );
-    }
-
-    // Copy existing nodes
-    if (nodeCount > 0) {
-      final oldNodeStartIndex = dataCount * 2;
-      final newNodeStartIndex = (dataCount - 1) * 2;
-      newContent.setRange(
-        newNodeStartIndex, // Start index in newContent (after all data)
-        newNodeStartIndex + nodeCount, // End index in newContent
-        content,
-        oldNodeStartIndex, // Start index in old content (start of nodes)
-      );
-    }
-
-    // Add the new subNode at the end of the node section
-    newContent[newContent.length - 1] = subNode;
-
-    // Create and return the new immutable node
-    return ChampInternalNode<K, V>(
-      dataMap ^ bitpos, // Remove data bit
-      nodeMap | bitpos, // Add node bit
-      newContent, // Pass the newly constructed list
-      null, // owner is null for immutable result
-    );
-  }
-
-  // --- In-place mutation helpers (only call when isTransient(owner) is true) ---
-
-  /// Inserts a data entry (key/value pair) into the [content] list at the
-  /// correct position based on its [dataIndex]. Updates the [dataMap].
-  /// Assumes the node is transient and owned.
-  void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
-    assert(isTransient(_owner));
-    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-      dataIndex,
-    );
-    // Insert into the list directly
-    content.insertAll(dataPayloadIndex, [key, value]);
-    // Update bitmap
-    dataMap |= bitpos;
-  }
-
-  /// Removes a data entry (key/value pair) from the [content] list based on
-  /// its [dataIndex]. Updates the [dataMap].
-  /// Assumes the node is transient and owned.
-  void _removeDataEntryInPlace(int dataIndex, int bitpos) {
-    assert(isTransient(_owner));
-    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-      dataIndex,
-    );
-    // Remove from the list
-    content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
-    // Update bitmap
-    dataMap ^= bitpos;
-  }
-
-  /// Removes a child node entry from the [content] list based on its [nodeIndex].
-  /// Updates the [nodeMap].
-  /// Assumes the node is transient and owned.
-  void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
-    assert(isTransient(_owner));
-    // Use static helper, passing current dataMap
-    final contentNodeIndex = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    );
-    // Remove from the list
-    content.removeAt(contentNodeIndex);
-    // Update bitmap
-    nodeMap ^= bitpos;
-  }
-
-  /// Replaces a data entry with a sub-node (in place).
-  /// Used when a hash collision occurs during a transient add/update.
-  /// Assumes the node is transient and owned.
-  void _replaceDataWithNodeInPlace(
-    int dataIndex,
-    ChampNode<K, V> subNode,
-    int bitpos,
-  ) {
-    assert(isTransient(_owner));
-    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-      dataIndex,
-    );
-
-    // --- Calculate node insertion index ---
-    // This needs to be based on the fragment corresponding to the bitpos
-    final frag = bitCount(
-      bitpos - 1,
-    ); // Get the index (0-31) from the bit position
-    // Calculate where the new node *will* go based on the *final* nodeMap state
-    final targetNodeMap =
-        nodeMap | bitpos; // Node map *after* adding the new node bit
-    final targetNodeIndex = bitCount(
-      targetNodeMap & (bitpos - 1),
-    ); // Nodes before the new one in the final map
-
-    // --- Modify content list ---
-    // 1. Remove the data entry (key, value)
-    content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
-    // 2. Insert the sub-node at the correct position in the node section
-    // The node section starts after the remaining data entries
-    final nodeInsertPos =
-        (bitCount(dataMap) - 1) * 2 +
-        targetNodeIndex; // Index in content *after* data removal
-    // Ensure insertion index is valid
-    if (nodeInsertPos > content.length) {
-      content.add(subNode); // Append if index is exactly at the end
-    } else {
-      content.insert(nodeInsertPos, subNode); // Insert otherwise
-    }
-
-    // --- Update bitmaps ---
-    dataMap ^= bitpos; // Remove data bit
-    nodeMap |= bitpos; // Add node bit
-  }
-
-  /// Replaces a node entry with a data entry (in place).
-  /// Used when a child node collapses to a data node during a transient remove.
-  /// Assumes the node is transient and owned.
-  void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
-    assert(isTransient(_owner));
-    // Calculate where new data *will* go based on the *final* dataMap state
-    final frag = indexFragment(0, hashOfKey(key)); // Fragment for the new data
-    final targetDataMap =
-        dataMap | bitpos; // dataMap *after* adding the new data bit
-    final targetDataIndex = ChampInternalNode.dataIndexFromFragment(
-      frag,
-      targetDataMap,
-    );
-    final dataPayloadIndex = ChampInternalNode.contentIndexFromDataIndex(
-      targetDataIndex,
-    );
-    final nodeContentIndex = ChampInternalNode.contentIndexFromNodeIndex(
-      nodeIndex,
-      dataMap,
-    ); // Index of node to remove (uses *current* dataMap)
-
-    // Remove the node entry
-    content.removeAt(nodeContentIndex);
-    // Insert the data entry (key, value) at the correct position
-    content.insertAll(dataPayloadIndex, [key, value]);
-
-    // Update bitmaps
-    dataMap |= bitpos; // Add data bit
-    nodeMap ^= bitpos; // Remove node bit
-  }
-
-  /// Checks if the node needs shrinking after a transient removal and performs
-  /// it (in place). Returns the potentially new node (e.g., if collapsed to
-  /// DataNode or EmptyNode), or `this` if no shrinking occurred.
-  /// Checks if the node needs shrinking after a removal and performs it (in place).
-  /// Returns the potentially new node (e.g., if collapsed to DataNode or EmptyNode).
-  /// Assumes the node is transient and owned.
-  ChampNode<K, V>? _shrinkIfNeeded(TransientOwner? owner) {
-    assert(isTransient(owner)); // Should only be called transiently
-
-    // Condition 1: Collapse to EmptyNode
-    if (dataMap == 0 && nodeMap == 0) {
-      return ChampEmptyNode<K, V>();
-    }
-
-    // Condition 2: Collapse to DataNode
-    // Only one data entry left, no sub-nodes
-    if (nodeMap == 0 && bitCount(dataMap) == 1) {
-      final key = content[0] as K;
-      final value = content[1] as V;
-      // Return immutable DataNode
-      return ChampDataNode<K, V>(hashOfKey(key), key, value);
-    }
-
-    // Condition 3: Merge single sub-node with single data entry if possible
-    // (More complex CHAMP optimization, potentially skip for now)
-    // if (bitCount(dataMap) == 1 && bitCount(nodeMap) == 1) { ... }
-
-    // Condition 4: If only one sub-node remains, collapse this level
-    if (dataMap == 0 && bitCount(nodeMap) == 1) {
-      // The remaining sub-node might be mutable or immutable
-      return content[0] as ChampNode<K, V>;
-    }
-
-    // No shrinking needed, return the current (mutable) node
-    return this;
-  }
-} // End of ChampInternalNode
+} // End of ChampArrayNode
 
 // --- Merging Logic ---
 
-/// Merges two data entries into a new node (Internal or Collision).
+/// Merges two data entries into a new node (Bitmap or Collision).
 /// This is used when adding a new entry results in a collision with an existing
 /// [ChampDataNode] or when splitting nodes during bulk loading.
 ///
@@ -1948,7 +2968,7 @@ class ChampInternalNode<K, V> extends ChampNode<K, V> {
 /// - [hash1], [key1], [value1]: Details of the first entry.
 /// - [hash2], [key2], [value2]: Details of the second entry.
 ///
-/// Returns an immutable [ChampInternalNode] or [ChampCollisionNode].
+/// Returns an immutable [ChampBitmapNode] or [ChampCollisionNode].
 /// - [owner]: Optional owner for creating transient nodes during the merge.
 ChampNode<K, V> mergeDataEntries<K, V>(
   int shift,
@@ -1986,19 +3006,23 @@ ChampNode<K, V> mergeDataEntries<K, V>(
       value2,
       owner, // Pass owner down recursively
     );
-    // Create an internal node with the single sub-node
+    // Create a bitmap node with the single sub-node
     final bitpos = 1 << frag1;
-    return ChampInternalNode<K, V>(
-      0, // No data map
-      bitpos, // Node map with single bit set
-      [subNode],
-      owner, // Pass owner for potential transient internal node
-    );
+    final dataMap = 0;
+    final nodeMap = bitpos;
+    final children = [subNode];
+    // Create directly based on count
+    if (1 <= kSparseNodeThreshold) {
+      return ChampSparseNode<K, V>(dataMap, nodeMap, children, owner);
+    } else {
+      return ChampArrayNode<K, V>(dataMap, nodeMap, children, owner);
+    }
   } else {
-    // Fragments differ, create an internal node with two data entries
+    // Fragments differ, create a bitmap node with two data entries
     final bitpos1 = 1 << frag1;
     final bitpos2 = 1 << frag2;
     final newDataMap = bitpos1 | bitpos2;
+    final newNodeMap = 0;
 
     // Order entries based on fragment index
     final List<Object?> newContent;
@@ -2007,11 +3031,11 @@ ChampNode<K, V> mergeDataEntries<K, V>(
     } else {
       newContent = [key2, value2, key1, value1];
     }
-    return ChampInternalNode<K, V>(
-      newDataMap,
-      0, // No node map
-      newContent,
-      owner, // Pass owner for potential transient internal node
-    );
+    // Create directly based on count
+    if (2 <= kSparseNodeThreshold) {
+      return ChampSparseNode<K, V>(newDataMap, newNodeMap, newContent, owner);
+    } else {
+      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newContent, owner);
+    }
   }
 }

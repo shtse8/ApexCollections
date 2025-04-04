@@ -3,6 +3,8 @@ library;
 
 import 'champ_node.dart' as champ;
 
+import 'champ_node.dart' as champ;
+
 /// Efficient iterator for traversing the CHAMP Trie.
 class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
   // Stacks to manage the traversal state
@@ -36,7 +38,7 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
       _nodeStack.add(node);
       _bitposStack.add(0); // Not used for collision nodes
       _collisionIteratorStack.add(node.entries.iterator);
-    } else if (node is champ.ChampInternalNode<K, V>) {
+    } else if (node is champ.ChampBitmapNode<K, V>) {
       _nodeStack.add(node);
       _bitposStack.add(1); // Start checking from the first bit position
     }
@@ -87,10 +89,21 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
         }
       }
 
-      if (node is champ.ChampInternalNode<K, V>) {
+      if (node is champ.ChampBitmapNode<K, V>) {
         final dataMap = node.dataMap;
         final nodeMap = node.nodeMap;
-        final content = node.content;
+        // Access the correct list based on the concrete type
+        final List<Object?> list;
+        if (node is champ.ChampArrayNode<K, V>) {
+          list = node.content;
+        } else if (node is champ.ChampSparseNode<K, V>) {
+          list = node.children;
+        } else {
+          // Should not happen if type check is exhaustive
+          throw StateError(
+            'Unexpected ChampBitmapNode subtype: ${node.runtimeType}',
+          );
+        }
         final dataSlots =
             champ.bitCount(dataMap) * 2; // Calculate data offset once
 
@@ -100,15 +113,16 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
         // Resume checking bit positions from where we left off
         for (
           int currentBitpos = bitpos; // Start from saved bitpos
-          currentBitpos != 0; // Loop until shift overflows to 0
+          // Loop until shift overflows or exceeds max bits for the level
+          currentBitpos != 0 && currentBitpos <= (1 << champ.kBitPartitionSize);
           currentBitpos <<= 1 // Move to next bit
         ) {
           if ((dataMap & currentBitpos) != 0) {
             // Found a data entry
             final dataIndex = champ.bitCount(dataMap & (currentBitpos - 1));
             final payloadIndex = dataIndex * 2;
-            _currentKey = content[payloadIndex] as K;
-            _currentValue = content[payloadIndex + 1] as V;
+            _currentKey = list[payloadIndex] as K; // Use 'list'
+            _currentValue = list[payloadIndex + 1] as V; // Use 'list'
             _hasCurrent = true;
             // Update stack to resume after this bitpos on next call
             _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
@@ -123,8 +137,9 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
             final nodeIndex =
                 dataSlots + nodeLocalIndex; // Use pre-calculated dataSlots
 
-            // Check bounds before accessing content
-            if (nodeIndex < 0 || nodeIndex >= content.length) {
+            // Check bounds before accessing list
+            if (nodeIndex < 0 || nodeIndex >= list.length) {
+              // Use 'list'
               // This should ideally not happen with correct node logic, but handle defensively.
               // Consider logging an error or throwing if this occurs in production.
               _nodeStack.removeLast();
@@ -134,7 +149,8 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
               break; // Exit inner loop, continue outer loop
             }
 
-            final subNode = content[nodeIndex] as champ.ChampNode<K, V>;
+            final subNode =
+                list[nodeIndex] as champ.ChampNode<K, V>; // Use 'list'
 
             // Update stack to resume after this bitpos in the current node later
             _bitposStack[_bitposStack.length - 1] = currentBitpos << 1;
