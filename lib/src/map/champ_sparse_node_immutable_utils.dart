@@ -2,8 +2,9 @@
 library;
 
 import 'champ_sparse_node.dart';
-import 'champ_array_node.dart';
+import 'champ_array_node_base.dart'; // Import base for type
 import 'champ_node_base.dart';
+import 'champ_array_node_impl.dart'; // Import concrete implementation
 import 'champ_utils.dart';
 import 'champ_empty_node.dart';
 import 'champ_data_node.dart';
@@ -40,7 +41,7 @@ extension ChampSparseNodeImmutableUtils<K, V> on ChampSparseNode<K, V> {
       return ChampSparseNode<K, V>(newDataMap, newNodeMap, newContent);
     } else {
       // Transition to ArrayNode
-      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newContent);
+      return ChampArrayNodeImpl<K, V>(newDataMap, newNodeMap, newContent);
     }
   }
 

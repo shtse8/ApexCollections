@@ -1,6 +1,6 @@
 import 'package:apex_collections/apex_collections.dart';
 import 'package:apex_collections/src/list/apex_list.dart'; // For ApexListImpl
-import 'package:apex_collections/src/list/rrb_node.dart'
+import 'package:apex_collections/src/list/rrb_internal_node.dart'
     as rrb; // For RrbInternalNode
 import 'package:test/test.dart';
 

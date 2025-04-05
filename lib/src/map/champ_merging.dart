@@ -8,7 +8,8 @@ import 'champ_utils.dart';
 import 'champ_collision_node.dart';
 import 'champ_bitmap_node.dart'; // Needed for return type hint
 import 'champ_sparse_node.dart';
-import 'champ_array_node.dart';
+import 'champ_array_node_base.dart'; // Import base for type
+import 'champ_array_node_impl.dart'; // Import concrete implementation
 
 // --- Merging Logic ---
 
@@ -69,7 +70,7 @@ ChampNode<K, V> mergeDataEntries<K, V>(
       return ChampSparseNode<K, V>(dataMap, nodeMap, children, owner);
     } else {
       // Should not happen if threshold >= 1
-      return ChampArrayNode<K, V>(dataMap, nodeMap, children, owner);
+      return ChampArrayNodeImpl<K, V>(dataMap, nodeMap, children, owner);
     }
   } else {
     // Fragments differ, create a bitmap node with two data entries
@@ -89,7 +90,12 @@ ChampNode<K, V> mergeDataEntries<K, V>(
     if (kSparseNodeThreshold >= 2) {
       return ChampSparseNode<K, V>(newDataMap, newNodeMap, newContent, owner);
     } else {
-      return ChampArrayNode<K, V>(newDataMap, newNodeMap, newContent, owner);
+      return ChampArrayNodeImpl<K, V>(
+        newDataMap,
+        newNodeMap,
+        newContent,
+        owner,
+      );
     }
   }
 }

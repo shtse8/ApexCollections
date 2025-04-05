@@ -7,7 +7,8 @@ import 'champ_utils.dart';
 
 extension ChampArrayNodeMutationUtilsExtension<K, V> on ChampArrayNode<K, V> {
   /// Inserts a data entry into the `content` list. Updates `dataMap`. Assumes transient.
-  void _insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
+  void insertDataEntryInPlace(int dataIndex, K key, V value, int bitpos) {
+    // Made public
     // assert(_owner != null); // Removed: Helper called only in transient context
     final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
     content.insertAll(dataPayloadIndex, [key, value]);
@@ -15,7 +16,8 @@ extension ChampArrayNodeMutationUtilsExtension<K, V> on ChampArrayNode<K, V> {
   }
 
   /// Removes a data entry from the `content` list. Updates `dataMap`. Assumes transient.
-  void _removeDataEntryInPlace(int dataIndex, int bitpos) {
+  void removeDataEntryInPlace(int dataIndex, int bitpos) {
+    // Made public
     // assert(_owner != null); // Removed: Helper called only in transient context
     final dataPayloadIndex = contentIndexFromDataIndex(dataIndex);
     content.removeRange(dataPayloadIndex, dataPayloadIndex + 2);
@@ -23,7 +25,8 @@ extension ChampArrayNodeMutationUtilsExtension<K, V> on ChampArrayNode<K, V> {
   }
 
   /// Removes a child node entry from the `content` list. Updates `nodeMap`. Assumes transient.
-  void _removeNodeEntryInPlace(int nodeIndex, int bitpos) {
+  void removeNodeEntryInPlace(int nodeIndex, int bitpos) {
+    // Made public
     // assert(_owner != null); // Removed: Helper called only in transient context
     // nodeIndex is the index within the conceptual *reversed* node array
     final contentNodeIndex = contentIndexFromNodeIndex(
@@ -35,7 +38,8 @@ extension ChampArrayNodeMutationUtilsExtension<K, V> on ChampArrayNode<K, V> {
   }
 
   /// Replaces a data entry with a sub-node in place. Updates bitmaps. Assumes transient.
-  void _replaceDataWithNodeInPlace(
+  void replaceDataWithNodeInPlace(
+    // Made public
     int dataIndex,
     ChampNode<K, V> subNode,
     int bitpos,
@@ -61,7 +65,8 @@ extension ChampArrayNodeMutationUtilsExtension<K, V> on ChampArrayNode<K, V> {
   }
 
   /// Replaces a node entry with a data entry in place. Updates bitmaps. Assumes transient.
-  void _replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
+  void replaceNodeWithDataInPlace(int nodeIndex, K key, V value, int bitpos) {
+    // Made public
     // assert(_owner != null); // Removed: Helper called only in transient context
     // nodeIndex is the index within the conceptual *reversed* node array
     final frag = bitCount(bitpos - 1); // Fragment for the new data

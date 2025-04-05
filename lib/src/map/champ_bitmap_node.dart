@@ -5,7 +5,8 @@ import 'champ_node_base.dart';
 import 'champ_utils.dart';
 // Import concrete implementations for the factory constructor
 import 'champ_sparse_node.dart';
-import 'champ_array_node.dart';
+import 'champ_array_node_base.dart'; // Import base for type
+import 'champ_array_node_impl.dart'; // Import concrete implementation
 
 // --- Bitmap Node Base Class ---
 
@@ -64,7 +65,7 @@ abstract class ChampBitmapNode<K, V> extends ChampNode<K, V> {
       return ChampSparseNode<K, V>(dataMap, newNodeMap, children, owner);
     } else {
       // If threshold is very low (e.g., 0 or 1), start with ArrayNode
-      return ChampArrayNode<K, V>(dataMap, newNodeMap, children, owner);
+      return ChampArrayNodeImpl<K, V>(dataMap, newNodeMap, children, owner);
     }
   }
 

@@ -2,8 +2,9 @@
 library;
 
 import 'champ_sparse_node.dart';
-import 'champ_array_node.dart';
+import 'champ_array_node_base.dart'; // Import base for type
 import 'champ_node_base.dart';
+import 'champ_array_node_impl.dart'; // Import concrete implementation
 import 'champ_utils.dart';
 import 'champ_merging.dart';
 import 'champ_sparse_node_mutation_utils.dart'; // For in-place mutation helpers
@@ -128,7 +129,7 @@ extension ChampSparseNodeUpdateUtils<K, V> on ChampSparseNode<K, V> {
       if (childCount > kSparseNodeThreshold) {
         // Create ArrayNode, passing the current mutable children list and owner
         return (
-          node: ChampArrayNode<K, V>(dataMap, nodeMap, children, owner),
+          node: ChampArrayNodeImpl<K, V>(dataMap, nodeMap, children, owner),
           sizeChanged: true,
         );
       }
@@ -264,7 +265,7 @@ extension ChampSparseNodeUpdateUtils<K, V> on ChampSparseNode<K, V> {
       // Check for transition Sparse -> Array
       if (newChildCount > kSparseNodeThreshold) {
         return (
-          node: ChampArrayNode<K, V>(newDataMap, nodeMap, newChildren),
+          node: ChampArrayNodeImpl<K, V>(newDataMap, nodeMap, newChildren),
           sizeChanged: true,
         );
       } else {
