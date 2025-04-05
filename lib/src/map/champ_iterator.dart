@@ -81,7 +81,26 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
           );
         }
 
-        // Iterate through possible bit positions in reverse order (31 down to 0)
+        // Push data entries first (in reverse bit order)
+        for (
+          int i = champ.kBitPartitionSize * champ.kMaxDepth - 1;
+          i >= 0;
+          i--
+        ) {
+          final bitpos = 1 << i;
+          if ((dataMap & bitpos) != 0) {
+            final dataIndex = champ.dataIndexFromFragment(i, dataMap);
+            final payloadIndex = champ.contentIndexFromDataIndex(dataIndex);
+            if (payloadIndex >= 0 && payloadIndex + 1 < list.length) {
+              final key = list[payloadIndex] as K;
+              final value = list[payloadIndex + 1] as V;
+              _stack.addFirst([key, value]); // Push list marker
+            } else {
+              print("Error: Iterator data index out of bounds.");
+            }
+          }
+        }
+        // Then push node entries (in reverse bit order)
         for (
           int i = champ.kBitPartitionSize * champ.kMaxDepth - 1;
           i >= 0;
@@ -90,31 +109,14 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
           final bitpos = 1 << i;
           if ((nodeMap & bitpos) != 0) {
             final nodeIndex = champ.nodeIndexFromFragment(i, nodeMap);
-            // Use the updated contentIndexFromNodeIndex which takes list length
             final contentIdx = champ.contentIndexFromNodeIndex(
               nodeIndex,
-              list.length, // Pass list length instead of dataMap
+              list.length,
             );
-            // Check bounds before accessing list
             if (contentIdx >= 0 && contentIdx < list.length) {
               _stack.addFirst(list[contentIdx] as champ.ChampNode<K, V>);
             } else {
-              // Log error or handle defensively if index is out of bounds
               print("Error: Iterator node index out of bounds.");
-            }
-          }
-          if ((dataMap & bitpos) != 0) {
-            final dataIndex = champ.dataIndexFromFragment(i, dataMap);
-            final payloadIndex = champ.contentIndexFromDataIndex(dataIndex);
-            // Check bounds before accessing list
-            if (payloadIndex >= 0 && payloadIndex + 1 < list.length) {
-              // Push [key, value] list instead of MapEntry
-              final key = list[payloadIndex] as K;
-              final value = list[payloadIndex + 1] as V;
-              _stack.addFirst([key, value]); // Push list marker
-            } else {
-              // Log error or handle defensively if index is out of bounds
-              print("Error: Iterator data index out of bounds.");
             }
           }
         }
