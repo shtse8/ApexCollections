@@ -52,6 +52,9 @@ abstract class HamtNode<K, V> {
   /// Placeholder for removing a key.
   HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner);
 
+  /// Checks if a key exists within this node or its children.
+  bool containsKey(K key, int hash, int shift);
+
   // TODO: Add equality and hashCode implementations
 }
 
@@ -88,6 +91,11 @@ class HamtEmptyNode<K, V> extends HamtNode<K, V> {
   @override
   HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
     return this; // Removing from empty does nothing
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    return false; // Key cannot exist in an empty node
   }
 
   @override
@@ -154,13 +162,18 @@ class HamtDataNode<K, V> extends HamtNode<K, V> {
         HamtDataNode(hash, key, value),
       ]);
     } else {
-      // Expand to a BitmapNode (SparseNode)
-      // TODO: Handle transient owner?
+      // Create a new SparseNode containing both the original data and the new data
       // Corrected call to static empty method
       return HamtSparseNode.empty<K, V>()
           .add(dataKey, dataValue, dataHash, shift, owner) // Add original data
           .add(key, value, hash, shift, owner); // Add new data
     }
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    // Only need to check key equality
+    return key == dataKey;
   }
 
   @override
@@ -232,23 +245,16 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
       // and the new data node, placed according to their respective hash fragments.
       // TODO: Handle transient owner?
       final newDataNode = HamtDataNode(hash, key, value);
-      // Corrected call to static empty method and ensure addNode is available/correct
-      // Assuming addNode exists on HamtSparseNode and returns HamtNode
-      // Start with an empty sparse node which is a HamtBitmapNode
+      // Create a new SparseNode containing the current collision node and the new data node
+      // Assuming addNode exists and works correctly on HamtSparseNode
       HamtBitmapNode<K, V> newNode = HamtSparseNode.empty<K, V>();
-      // Add the existing collision node first
       newNode =
           newNode.addNode(collisionFrag, this, shift, owner)
               as HamtBitmapNode<K, V>;
-      // Then add the new data node
       newNode =
           newNode.addNode(newFrag, newDataNode, shift, owner)
               as HamtBitmapNode<K, V>;
       return newNode;
-      // Note: The casts 'as HamtBitmapNode<K, V>' might be redundant if addNode's
-      // return type is correctly defined as HamtBitmapNode or a subtype,
-      // but added for explicit clarity during development.
-      // We assume addNode handles potential transitions (e.g., Sparse to Array) internally.
     }
 
     // Hash fragment matches, add/update within the collision list
@@ -279,6 +285,17 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
       newChildren.add(newDataNode);
     }
     return HamtCollisionNode(collisionFrag, newChildren);
+  }
+
+  @override
+  bool containsKey(K key, int hash, int shift) {
+    // Only need to check key equality within the list
+    for (final child in children) {
+      if (child.dataKey == key) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @override
@@ -476,6 +493,27 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
   }
 
   @override
+  bool containsKey(K key, int hash, int shift) {
+    final frag = HamtBitmapNode.indexFragment(hash, shift);
+    final pos = HamtBitmapNode.bitpos(frag);
+
+    if ((bitmap & pos) == 0) {
+      return false; // No entry for this fragment
+    }
+
+    final idx = sparseIndex(pos);
+    // Basic bounds check
+    if (idx >= content.length) {
+      print(
+        "Error: SparseNode.containsKey index out of bounds. Bitmap: ${bitmap.toRadixString(2)}, Pos: ${pos.toRadixString(2)}, Idx: $idx, ContentLen: ${content.length}",
+      );
+      return false;
+    }
+    final child = content[idx];
+    return child.containsKey(key, hash, shift + 5); // Recurse
+  }
+
+  @override
   HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
     final frag = HamtBitmapNode.indexFragment(hash, shift);
     final pos = HamtBitmapNode.bitpos(frag);
@@ -511,10 +549,19 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
       final newContent = List<HamtNode<K, V>>.from(content);
       newContent.removeAt(idx);
 
-      // Collapse check: If only one child remains and it's NOT a BitmapNode,
+      // Collapse check: If only one child remains and it's a DataNode or CollisionNode
+      // (i.e., not another BitmapNode needing the current level's bitmap info),
       // return the child directly to avoid unnecessary intermediate nodes.
-      if (newContent.length == 1 && newContent[0] is! HamtBitmapNode<K, V>) {
-        return newContent[0];
+      if (newContent.length == 1) {
+        final singleChild = newContent[0];
+        if (singleChild is HamtDataNode<K, V> ||
+            singleChild is HamtCollisionNode<K, V>) {
+          // Check if the child's hash fragment matches the current node's expected fragment
+          // This check might be complex or unnecessary depending on how strict we are.
+          // For now, let's assume collapsing is safe if it's not a BitmapNode.
+          return singleChild;
+        }
+        // If the single child is another BitmapNode, we still need this SparseNode level.
       }
 
       // TODO: Check if node needs to transition from ArrayNode back to SparseNode?
@@ -535,10 +582,10 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is HamtSparseNode &&
+      (other is HamtSparseNode && // Use parentheses for clarity
           runtimeType == other.runtimeType &&
           bitmap == other.bitmap &&
-          const DeepCollectionEquality().equals(content, other.content);
+          const DeepCollectionEquality().equals(content, other.content));
 }
 
 // TODO: Define HamtArrayNode<K, V> (less common, uses full array)

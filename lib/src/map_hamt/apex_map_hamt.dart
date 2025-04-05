@@ -170,7 +170,7 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     return this; // Key type mismatch, no change
   }
 
-  // --- Other Operations (Placeholders) ---
+  // --- Other Operations ---
 
   @override
   ApexMap<K, V> addAll(Map<K, V> other) {
@@ -208,15 +208,8 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
   @override
   bool containsKey(Object? key) {
     if (key is K) {
-      return _root.get(key, key.hashCode, 0) != null || // Check if value exists
-          (_root is HamtDataNode<K, V> &&
-              (_root as HamtDataNode<K, V>).dataKey ==
-                  key) || // Handle case where value might be null
-          (_root is HamtCollisionNode<K, V> &&
-              (_root as HamtCollisionNode<K, V>).children.any(
-                (node) => node.dataKey == key,
-              )); // Check collision node
-      // TODO: Need a dedicated containsKey on nodes?
+      // Delegate to the node's containsKey method
+      return _root.containsKey(key, key.hashCode, 0);
     }
     return false;
   }
@@ -231,9 +224,6 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     }
     return false;
   }
-
-  @override
-  Iterable<MapEntry<K, V>> get entries => _MapEntryIterable<K, V>(this);
 
   @override
   ApexMap<RK, RV> mapEntries<RK, RV>(
@@ -325,6 +315,42 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     return ApexMapHamt.fromEntries(newEntries);
   }
 
+  @override
+  Map<K, V> toMap() {
+    final map = <K, V>{};
+    final iter = HamtIterator<K, V>(_root);
+    while (iter.moveNext()) {
+      map[iter.currentKey] = iter.currentValue;
+    }
+    return map;
+  }
+
+  @override
+  void forEachEntry(void Function(K key, V value) f) {
+    final iter = HamtIterator<K, V>(_root);
+    while (iter.moveNext()) {
+      f(iter.currentKey, iter.currentValue);
+    }
+  }
+
+  @override
+  V putIfAbsent(K key, V Function() ifAbsent) {
+    final existingValue = this[key];
+    // Need to check containsKey explicitly for null values
+    if (existingValue != null || containsKey(key)) {
+      return existingValue as V;
+    } else {
+      final newValue = ifAbsent();
+      // Note: This add operation creates a new map instance internally,
+      // but the original instance (this) remains unchanged, and the new
+      // instance is not returned by putIfAbsent, as per the Map contract.
+      // This behavior might be surprising for an immutable collection.
+      // Consider if a different API (e.g., `tryAdd`) would be clearer.
+      add(key, newValue); // This call doesn't update 'this' map instance
+      return newValue;
+    }
+  }
+
   // --- Iteration ---
 
   @override
@@ -337,10 +363,127 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
   }
 
   @override
+  Iterable<MapEntry<K, V>> get entries => _MapEntryIterable<K, V>(this);
+
+  @override
   Iterable<K> get keys => _KeyIterable<K, V>(this);
 
   @override
   Iterable<V> get values => _ValueIterable<K, V>(this);
+
+  // --- Iterable Methods (delegated to entries) ---
+
+  @override
+  bool any(bool Function(MapEntry<K, V> element) test) => entries.any(test);
+
+  @override
+  Iterable<R> cast<R>() => entries.cast<R>();
+
+  @override
+  bool contains(Object? element) {
+    if (element is MapEntry<K, V>) {
+      // Check if the key exists and the value matches
+      final V? value = this[element.key];
+      // Use containsKey check for potential null values
+      return containsKey(element.key) && value == element.value;
+    }
+    return false;
+  }
+
+  @override
+  MapEntry<K, V> elementAt(int index) => entries.elementAt(index);
+
+  @override
+  bool every(bool Function(MapEntry<K, V> element) test) => entries.every(test);
+
+  @override
+  Iterable<T> expand<T>(
+    Iterable<T> Function(MapEntry<K, V> element) toElements,
+  ) => entries.expand(toElements);
+
+  @override
+  MapEntry<K, V> get first => entries.first; // Corrected getter syntax
+
+  @override
+  MapEntry<K, V> firstWhere(
+    bool Function(MapEntry<K, V> element) test, {
+    MapEntry<K, V> Function()? orElse,
+  }) => entries.firstWhere(test, orElse: orElse);
+
+  @override
+  T fold<T>(
+    T initialValue,
+    T Function(T previousValue, MapEntry<K, V> element) combine,
+  ) => entries.fold(initialValue, combine);
+
+  @override
+  Iterable<MapEntry<K, V>> followedBy(Iterable<MapEntry<K, V>> other) =>
+      entries.followedBy(other);
+
+  @override
+  void forEach(void Function(MapEntry<K, V> element) action) =>
+      entries.forEach(action);
+
+  @override
+  String join([String separator = ""]) => entries.join(separator);
+
+  @override
+  MapEntry<K, V> get last => entries.last; // Corrected getter syntax
+
+  @override
+  MapEntry<K, V> lastWhere(
+    bool Function(MapEntry<K, V> element) test, {
+    MapEntry<K, V> Function()? orElse,
+  }) => entries.lastWhere(test, orElse: orElse);
+
+  @override
+  Iterable<T> map<T>(T Function(MapEntry<K, V> element) toElement) =>
+      entries.map(toElement);
+
+  @override
+  MapEntry<K, V> reduce(
+    MapEntry<K, V> Function(MapEntry<K, V> value, MapEntry<K, V> element)
+    combine,
+  ) => entries.reduce(combine);
+
+  @override
+  MapEntry<K, V> get single => entries.single; // Corrected getter syntax
+
+  @override
+  MapEntry<K, V> singleWhere(
+    bool Function(MapEntry<K, V> element) test, {
+    MapEntry<K, V> Function()? orElse,
+  }) => entries.singleWhere(test, orElse: orElse);
+
+  @override
+  Iterable<MapEntry<K, V>> skip(int count) => entries.skip(count);
+
+  @override
+  Iterable<MapEntry<K, V>> skipWhile(
+    bool Function(MapEntry<K, V> value) test,
+  ) => entries.skipWhile(test);
+
+  @override
+  Iterable<MapEntry<K, V>> take(int count) => entries.take(count);
+
+  @override
+  Iterable<MapEntry<K, V>> takeWhile(
+    bool Function(MapEntry<K, V> value) test,
+  ) => entries.takeWhile(test);
+
+  @override
+  List<MapEntry<K, V>> toList({bool growable = true}) =>
+      entries.toList(growable: growable);
+
+  @override
+  Set<MapEntry<K, V>> toSet() => entries.toSet();
+
+  @override
+  Iterable<MapEntry<K, V>> where(bool Function(MapEntry<K, V> element) test) =>
+      entries.where(test);
+
+  @override
+  Iterable<T> whereType<T>() => entries.whereType<T>();
 
   // --- Equality and HashCode ---
 
@@ -360,7 +503,10 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     // TODO: Implement efficient entry comparison if needed
     try {
       for (final entry in entries) {
-        if (other[entry.key] != entry.value) return false;
+        // Use containsKey check for null safety
+        if (!other.containsKey(entry.key) || other[entry.key] != entry.value) {
+          return false;
+        }
       }
       return true;
     } catch (_) {
@@ -418,7 +564,13 @@ class _KeyIterable<K, V> extends Iterable<K> {
   @override
   bool get isNotEmpty => _map.isNotEmpty;
   @override
-  K get first => iterator.current; // Assumes moveNext called
+  K get first {
+    // Corrected getter syntax
+    final it = iterator;
+    if (!it.moveNext()) throw StateError('No element');
+    return it.current;
+  }
+
   @override
   K get last {
     // Inefficient
@@ -470,7 +622,13 @@ class _ValueIterable<K, V> extends Iterable<V> {
   @override
   bool get isNotEmpty => _map.isNotEmpty;
   @override
-  V get first => iterator.current; // Assumes moveNext called
+  V get first {
+    // Corrected getter syntax
+    final it = iterator;
+    if (!it.moveNext()) throw StateError('No element');
+    return it.current;
+  }
+
   @override
   V get last {
     // Inefficient
@@ -524,6 +682,7 @@ class _MapEntryIterable<K, V> extends Iterable<MapEntry<K, V>> {
   bool get isNotEmpty => _map.isNotEmpty;
   @override
   MapEntry<K, V> get first {
+    // Corrected getter syntax
     final it = iterator;
     if (!it.moveNext()) throw StateError('No element');
     return it.current;
