@@ -21,6 +21,38 @@ class TransientOwner {
   }
 }
 
+/// Result object for node modification operations (add/remove).
+class HamtModificationResult<K, V> {
+  final HamtNode<K, V> node;
+  final bool sizeChanged; // Indicates if the logical size of the map changed
+  final bool nodeChanged; // Indicates if the node instance itself changed
+
+  const HamtModificationResult(
+    this.node, {
+    required this.sizeChanged,
+    required this.nodeChanged,
+  });
+
+  // Helper for when no change occurred
+  static HamtModificationResult<K, V> noChange<K, V>(HamtNode<K, V> node) =>
+      HamtModificationResult(node, sizeChanged: false, nodeChanged: false);
+
+  // Helper for when only the node instance changed (e.g., value update)
+  static HamtModificationResult<K, V> nodeChangedOnly<K, V>(
+    HamtNode<K, V> node,
+  ) => HamtModificationResult(node, sizeChanged: false, nodeChanged: true);
+
+  // Helper for when a new element was added (size and node changed)
+  static HamtModificationResult<K, V> sizeAndNodeChanged<K, V>(
+    HamtNode<K, V> node,
+  ) => HamtModificationResult(node, sizeChanged: true, nodeChanged: true);
+
+  // Helper for when an element was removed (size and node changed)
+  // Note: 'sizeChanged' is implicitly true here, could rename method
+  static HamtModificationResult<K, V> removed<K, V>(HamtNode<K, V> node) =>
+      HamtModificationResult(node, sizeChanged: true, nodeChanged: true);
+}
+
 /// Base class for all HAMT node types.
 @immutable // Base remains immutable conceptually
 abstract class HamtNode<K, V> {
@@ -41,8 +73,9 @@ abstract class HamtNode<K, V> {
   V? get(K key, int hash, int shift);
 
   /// Placeholder for adding or updating a key-value pair.
-  /// If owner is provided and valid, may mutate the node in place and return 'this'.
-  HamtNode<K, V> add(
+  /// Returns a result indicating the new node and whether the size changed.
+  /// If owner is provided and valid, may mutate the node in place.
+  HamtModificationResult<K, V> add(
     K key,
     V value,
     int hash,
@@ -51,8 +84,14 @@ abstract class HamtNode<K, V> {
   );
 
   /// Placeholder for removing a key.
-  /// If owner is provided and valid, may mutate the node in place and return 'this'.
-  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner);
+  /// Returns a result indicating the new node and whether the size changed.
+  /// If owner is provided and valid, may mutate the node in place.
+  HamtModificationResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  );
 
   /// Checks if a key exists within this node or its children.
   bool containsKey(K key, int hash, int shift);
@@ -79,7 +118,7 @@ class HamtEmptyNode<K, V> extends HamtNode<K, V> {
   V? get(K key, int hash, int shift) => null;
 
   @override
-  HamtNode<K, V> add(
+  HamtModificationResult<K, V> add(
     K key,
     V value,
     int hash,
@@ -88,12 +127,21 @@ class HamtEmptyNode<K, V> extends HamtNode<K, V> {
   ) {
     // Return a HamtDataNode when adding to empty
     // Transient owner doesn't apply when creating a new node type
-    return HamtDataNode(hash, key, value);
+    return HamtModificationResult.sizeAndNodeChanged(
+      HamtDataNode(hash, key, value),
+    );
   }
 
   @override
-  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
-    return this; // Removing from empty does nothing
+  HamtModificationResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
+    return HamtModificationResult.noChange(
+      this,
+    ); // Removing from empty does nothing
   }
 
   @override
@@ -130,7 +178,7 @@ class HamtDataNode<K, V> extends HamtNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> add(
+  HamtModificationResult<K, V> add(
     K key,
     V value,
     int hash,
@@ -140,10 +188,12 @@ class HamtDataNode<K, V> extends HamtNode<K, V> {
     if (key == dataKey) {
       // Update existing key
       if (value == dataValue) {
-        return this; // Value is the same, return same instance
+        return HamtModificationResult.noChange(this); // Value is the same
       }
       // Transient owner doesn't apply when creating a new node instance
-      return HamtDataNode(hash, key, value);
+      return HamtModificationResult.nodeChangedOnly(
+        HamtDataNode(hash, key, value),
+      );
     }
 
     // Collision or expansion needed
@@ -160,16 +210,31 @@ class HamtDataNode<K, V> extends HamtNode<K, V> {
     if (currentFrag == newFrag) {
       // Hash collision at this level's fragment
       // Transient owner doesn't apply when creating a new node type
-      return HamtCollisionNode(currentFrag, [
+      final newNode = HamtCollisionNode(currentFrag, [
         this,
         HamtDataNode(hash, key, value),
       ]);
+      return HamtModificationResult.sizeAndNodeChanged(newNode);
     } else {
       // Expand to a BitmapNode (SparseNode)
       // Transient owner is passed down to the add calls on the new SparseNode
-      return HamtSparseNode.empty<K, V>()
-          .add(dataKey, dataValue, dataHash, shift, owner) // Add original data
-          .add(key, value, hash, shift, owner); // Add new data
+      // The result of the expansion is inherently a size and node change.
+      var result1 = HamtSparseNode.empty<K, V>().add(
+        dataKey,
+        dataValue,
+        dataHash,
+        shift,
+        owner,
+      ); // Add original data
+      var result2 = result1.node.add(
+        key,
+        value,
+        hash,
+        shift,
+        owner,
+      ); // Add new data
+      // The final node contains both, and size definitely changed.
+      return HamtModificationResult.sizeAndNodeChanged(result2.node);
     }
   }
 
@@ -180,12 +245,17 @@ class HamtDataNode<K, V> extends HamtNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+  HamtModificationResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
     if (key == dataKey) {
       // Transient owner doesn't apply when returning a different node type
-      return HamtEmptyNode.instance<K, V>();
+      return HamtModificationResult.removed(HamtEmptyNode.instance<K, V>());
     }
-    return this; // Key not found
+    return HamtModificationResult.noChange(this); // Key not found
   }
 
   @override
@@ -231,7 +301,7 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> add(
+  HamtModificationResult<K, V> add(
     K key,
     V value,
     int hash,
@@ -250,13 +320,14 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
       // Transient owner is passed down.
       final newDataNode = HamtDataNode(hash, key, value);
       HamtBitmapNode<K, V> newNode = HamtSparseNode.empty<K, V>();
+      // Assume addNode returns HamtModificationResult now
+      var result = newNode.addNode(collisionFrag, this, shift, owner);
       newNode =
-          newNode.addNode(collisionFrag, this, shift, owner)
-              as HamtBitmapNode<K, V>;
-      newNode =
-          newNode.addNode(newFrag, newDataNode, shift, owner)
-              as HamtBitmapNode<K, V>;
-      return newNode;
+          result.node
+              as HamtBitmapNode<K, V>; // Get the potentially modified/new node
+      result = newNode.addNode(newFrag, newDataNode, shift, owner);
+      // Expansion always results in size and node change
+      return HamtModificationResult.sizeAndNodeChanged(result.node);
     }
 
     // Hash fragment matches, add/update within the collision list
@@ -277,24 +348,26 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
     if (foundIndex != -1) {
       // Key found, update
       if (children[foundIndex].dataValue == value) {
-        return this; // Value is the same, no change needed
+        return HamtModificationResult.noChange(this); // Value is the same
       }
       // Create a new list with the updated node
       final newChildren = List<HamtDataNode<K, V>>.from(children);
       newChildren[foundIndex] = newDataNode; // Update existing entry
       // Transient owner doesn't apply when creating a new node instance
-      return HamtCollisionNode(collisionFrag, newChildren);
+      return HamtModificationResult.nodeChangedOnly(
+        HamtCollisionNode(collisionFrag, newChildren),
+      );
     } else {
       // Key not found, add new entry
       // Create a new list with the added node
       final newChildren = List<HamtDataNode<K, V>>.from(children)
         ..add(newDataNode);
       // Transient owner doesn't apply when creating a new node instance
-      return HamtCollisionNode(collisionFrag, newChildren);
+      return HamtModificationResult.sizeAndNodeChanged(
+        HamtCollisionNode(collisionFrag, newChildren),
+      );
     }
-    // Note: Transient mutation for the list itself could be added here if needed,
-    // but since CollisionNodes are expected to be relatively rare and small,
-    // the overhead might outweigh the benefit.
+    // Note: Transient mutation for the list itself could be added here if needed.
   }
 
   @override
@@ -309,7 +382,12 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+  HamtModificationResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
     // We only need to check the key here
     int foundIndex = -1;
     for (int i = 0; i < children.length; i++) {
@@ -320,19 +398,21 @@ class HamtCollisionNode<K, V> extends HamtNode<K, V> {
     }
 
     if (foundIndex == -1) {
-      return this; // Key not found in this collision node
+      return HamtModificationResult.noChange(this); // Key not found
     }
 
     // Transient owner doesn't apply when creating new node instances
     if (children.length == 2) {
       // Removing one leaves only one, collapse back to a DataNode
       final remainingChild = children[1 - foundIndex];
-      return remainingChild;
+      return HamtModificationResult.removed(remainingChild);
     } else {
       // Remove from list and create a new CollisionNode
       final newChildren = List<HamtDataNode<K, V>>.from(children)
         ..removeAt(foundIndex);
-      return HamtCollisionNode(collisionFrag, newChildren);
+      return HamtModificationResult.removed(
+        HamtCollisionNode(collisionFrag, newChildren),
+      );
     }
   }
 
@@ -385,9 +465,10 @@ abstract class HamtBitmapNode<K, V> extends HamtNode<K, V> {
 
   // Helper to add a node (DataNode or CollisionNode) to a BitmapNode.
   // This is used when expanding from Data/Collision or adding to existing Bitmap.
-  // Returns HamtNode because it might stay Sparse or transition to Array.
+  // Returns HamtModificationResult because it might stay Sparse or transition to Array.
   // If owner is valid, may mutate 'this' and return 'this'.
-  HamtNode<K, V> addNode(
+  HamtModificationResult<K, V> addNode(
+    // Changed return type
     int frag,
     HamtNode<K, V> nodeToAdd,
     int shift,
@@ -448,7 +529,8 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> add(
+  HamtModificationResult<K, V> add(
+    // Changed return type
     K key,
     V value,
     int hash,
@@ -474,13 +556,19 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
         content.insert(idx, newDataNode);
         bitmap = newBitmap;
         // TODO: Check transient transition to ArrayNode?
-        return this;
+        return HamtModificationResult(
+          this,
+          sizeChanged: true,
+          nodeChanged: true,
+        ); // Mutated in place
       } else {
         // Create new node
         final newContent = List<HamtNode<K, V>>.from(content)
           ..insert(idx, newDataNode);
         // TODO: Check immutable transition to ArrayNode?
-        return HamtSparseNode(newBitmap, newContent);
+        return HamtModificationResult.sizeAndNodeChanged(
+          HamtSparseNode(newBitmap, newContent),
+        );
       }
     } else {
       // Collision or update within existing child
@@ -491,15 +579,26 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
         );
         // Fallback: Recreate node with just the new item? Or throw?
         final newDataNode = HamtDataNode(hash, key, value);
-        return HamtSparseNode(pos, [newDataNode]); // Immutable fallback
+        // This case implies a logic error, returning a new node might hide it.
+        // Consider throwing an internal error. For now, return new node.
+        return HamtModificationResult.sizeAndNodeChanged(
+          HamtSparseNode(pos, [newDataNode]),
+        );
       }
 
       final child = content[idx];
       // Pass owner down for potential transient mutation in child
-      final newChild = child.add(key, value, hash, shift + 5, owner);
+      final HamtModificationResult<K, V> result = child.add(
+        key,
+        value,
+        hash,
+        shift + 5,
+        owner,
+      );
 
-      if (identical(child, newChild)) {
-        return this; // Child did not change (or mutated in place)
+      if (!result.nodeChanged) {
+        // Use result.nodeChanged
+        return HamtModificationResult.noChange(this); // Child did not change
       }
 
       if (transient) {
@@ -507,19 +606,30 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
         if (content is! List<HamtNode<K, V>>) {
           content = List.of(content);
         }
-        content[idx] = newChild;
-        return this;
+        content[idx] = result.node;
+        // Return 'this' but indicate node changed internally, and potentially size
+        return HamtModificationResult(
+          this,
+          sizeChanged: result.sizeChanged,
+          nodeChanged: true,
+        );
       } else {
         // Create new node with updated child
         final newContent = List<HamtNode<K, V>>.from(content);
-        newContent[idx] = newChild;
-        return HamtSparseNode(bitmap, newContent);
+        newContent[idx] = result.node;
+        // Propagate size change information
+        return HamtModificationResult(
+          HamtSparseNode(bitmap, newContent),
+          sizeChanged: result.sizeChanged,
+          nodeChanged: true,
+        );
       }
     }
   }
 
   @override
-  HamtNode<K, V> addNode(
+  HamtModificationResult<K, V> addNode(
+    // Changed return type
     int frag,
     HamtNode<K, V> nodeToAdd,
     int shift,
@@ -538,13 +648,16 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
       content.insert(idx, nodeToAdd);
       bitmap = newBitmap;
       // TODO: Check transient transition to ArrayNode?
-      return this;
+      // Adding a node always changes the structure, assume size changed by nodeToAdd.size
+      return HamtModificationResult(this, sizeChanged: true, nodeChanged: true);
     } else {
       // Create new node
       final newContent = List<HamtNode<K, V>>.from(content)
         ..insert(idx, nodeToAdd);
       // TODO: Check immutable transition to ArrayNode?
-      return HamtSparseNode(newBitmap, newContent);
+      return HamtModificationResult.sizeAndNodeChanged(
+        HamtSparseNode(newBitmap, newContent),
+      );
     }
   }
 
@@ -570,12 +683,18 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
   }
 
   @override
-  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+  HamtModificationResult<K, V> remove(
+    K key,
+    int hash,
+    int shift,
+    TransientOwner? owner,
+  ) {
+    // Changed return type
     final frag = HamtBitmapNode.indexFragment(hash, shift);
     final pos = HamtBitmapNode.bitpos(frag);
 
     if ((bitmap & pos) == 0) {
-      return this; // Key not found here
+      return HamtModificationResult.noChange(this); // Key not found here
     }
 
     final idx = sparseIndex(pos);
@@ -584,25 +703,35 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
       print(
         "Error: SparseNode.remove index out of bounds. Bitmap: ${bitmap.toRadixString(2)}, Pos: ${pos.toRadixString(2)}, Idx: $idx, ContentLen: ${content.length}",
       );
-      return this; // Cannot remove if index is wrong
+      return HamtModificationResult.noChange(
+        this,
+      ); // Cannot remove if index is wrong
     }
 
     final child = content[idx];
     // Pass owner down
-    final newChild = child.remove(key, hash, shift + 5, owner);
+    final HamtModificationResult<K, V> result = child.remove(
+      key,
+      hash,
+      shift + 5,
+      owner,
+    );
 
-    if (identical(child, newChild)) {
-      return this; // Child did not change (or mutated in place)
+    if (!result.nodeChanged) {
+      // Use result.nodeChanged
+      return HamtModificationResult.noChange(this); // Child did not change
     }
 
     final bool transient = owner?.isOwned ?? false;
+    final HamtNode<K, V> newChild =
+        result.node; // Get the potentially new child node
 
     if (newChild.isEmpty) {
       // Child became empty, remove it from this node
       final newBitmap = bitmap & ~pos;
       if (newBitmap == 0) {
         // This node becomes empty
-        return HamtEmptyNode.instance<K, V>();
+        return HamtModificationResult.removed(HamtEmptyNode.instance<K, V>());
       }
 
       // Check for collapse before modifying/copying content
@@ -614,7 +743,7 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
         if (singleChild is HamtDataNode<K, V> ||
             singleChild is HamtCollisionNode<K, V>) {
           // Collapse is safe
-          return singleChild;
+          return HamtModificationResult.removed(singleChild);
         }
       }
 
@@ -626,12 +755,18 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
         content.removeAt(idx);
         bitmap = newBitmap;
         // TODO: Check transient transition from ArrayNode?
-        return this;
+        return HamtModificationResult(
+          this,
+          sizeChanged: true,
+          nodeChanged: true,
+        ); // Mutated in place, size changed
       } else {
         // Create new node
         final newContent = List<HamtNode<K, V>>.from(content)..removeAt(idx);
         // TODO: Check immutable transition from ArrayNode?
-        return HamtSparseNode(newBitmap, newContent);
+        return HamtModificationResult.removed(
+          HamtSparseNode(newBitmap, newContent),
+        );
       }
     } else {
       // Child was modified but not empty
@@ -641,12 +776,22 @@ class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
           content = List.of(content);
         }
         content[idx] = newChild;
-        return this;
+        // Node instance changed internally, propagate size change info
+        return HamtModificationResult(
+          this,
+          sizeChanged: result.sizeChanged,
+          nodeChanged: true,
+        );
       } else {
         // Create new node with updated child
         final newContent = List<HamtNode<K, V>>.from(content);
         newContent[idx] = newChild;
-        return HamtSparseNode(bitmap, newContent);
+        // Propagate size change info
+        return HamtModificationResult(
+          HamtSparseNode(bitmap, newContent),
+          sizeChanged: result.sizeChanged,
+          nodeChanged: true,
+        );
       }
     }
   }

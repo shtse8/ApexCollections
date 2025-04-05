@@ -31,9 +31,15 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     final owner = TransientOwner(); // Use transient owner for bulk load
     int count = 0;
     for (final entry in map.entries) {
-      final oldSize = root.size;
-      root = root.add(entry.key, entry.value, entry.key.hashCode, 0, owner);
-      if (root.size > oldSize) {
+      final result = root.add(
+        entry.key,
+        entry.value,
+        entry.key.hashCode,
+        0,
+        owner,
+      );
+      root = result.node;
+      if (result.sizeChanged) {
         count++;
       }
     }
@@ -51,9 +57,15 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     final owner = TransientOwner();
     int count = 0;
     for (final entry in entries) {
-      final oldSize = root.size;
-      root = root.add(entry.key, entry.value, entry.key.hashCode, 0, owner);
-      if (root.size > oldSize) {
+      final result = root.add(
+        entry.key,
+        entry.value,
+        entry.key.hashCode,
+        0,
+        owner,
+      );
+      root = result.node;
+      if (result.sizeChanged) {
         count++;
       }
     }
@@ -76,9 +88,9 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     int count = 0;
     for (final key in keys) {
       final val = value(key);
-      final oldSize = root.size;
-      root = root.add(key, val, key.hashCode, 0, owner);
-      if (root.size > oldSize) {
+      final result = root.add(key, val, key.hashCode, 0, owner);
+      root = result.node;
+      if (result.sizeChanged) {
         count++;
       }
     }
@@ -105,9 +117,9 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     for (int i = 0; i < keyList.length; i++) {
       final key = keyList[i];
       final value = valueList[i];
-      final oldSize = root.size;
-      root = root.add(key, value, key.hashCode, 0, owner);
-      if (root.size > oldSize) {
+      final result = root.add(key, value, key.hashCode, 0, owner);
+      root = result.node;
+      if (result.sizeChanged) {
         count++;
       }
     }
@@ -138,34 +150,30 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
 
   @override
   ApexMap<K, V> add(K key, V value) {
-    final newRoot = _root.add(
+    final result = _root.add(
       key,
       value,
       key.hashCode,
       0,
       null,
     ); // No owner for single op
-    if (identical(newRoot, _root)) {
+    if (!result.nodeChanged) {
       return this; // No change
     }
-    // Calculate new length based on whether the add operation actually increased the size
-    // This requires the 'add' method on nodes to somehow signal if a new entry was added vs updated.
-    // For now, we'll rely on the size property, assuming it's correctly implemented.
-    // TODO: Refine length calculation based on node add result.
-    final newLength = newRoot.size;
-    return ApexMapHamt._(newRoot, newLength);
+    final newLength = _length + (result.sizeChanged ? 1 : 0);
+    return ApexMapHamt._(result.node, newLength);
   }
 
   @override
   ApexMap<K, V> remove(Object? key) {
     if (key is K) {
-      final newRoot = _root.remove(key, key.hashCode, 0, null); // No owner
-      if (identical(newRoot, _root)) {
+      final result = _root.remove(key, key.hashCode, 0, null); // No owner
+      if (!result.nodeChanged) {
         return this; // No change
       }
-      // TODO: Refine length calculation based on node remove result.
-      final newLength = newRoot.size;
-      return ApexMapHamt._(newRoot, newLength);
+      // sizeChanged is true if an element was actually removed
+      final newLength = _length - (result.sizeChanged ? 1 : 0);
+      return ApexMapHamt._(result.node, newLength);
     }
     return this; // Key type mismatch, no change
   }
@@ -182,15 +190,16 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     final owner = TransientOwner();
     int additions = 0;
     for (final entry in other.entries) {
-      final oldSize = mutableRoot.size;
-      mutableRoot = mutableRoot.add(
+      final result = mutableRoot.add(
         entry.key,
         entry.value,
         entry.key.hashCode,
         0,
         owner,
       );
-      if (mutableRoot.size > oldSize) {
+      mutableRoot =
+          result.node; // Update mutableRoot with potentially mutated node
+      if (result.sizeChanged) {
         additions++;
       }
     }
@@ -257,9 +266,9 @@ class ApexMapHamt<K, V> extends ApexMap<K, V> {
     if (keysToRemove.isEmpty) return this;
 
     for (final key in keysToRemove) {
-      final oldSize = mutableRoot.size;
-      mutableRoot = mutableRoot.remove(key, key.hashCode, 0, owner);
-      if (mutableRoot.size < oldSize) {
+      final result = mutableRoot.remove(key, key.hashCode, 0, owner);
+      mutableRoot = result.node; // Update mutableRoot
+      if (result.sizeChanged) {
         removalCount++;
       }
     }
