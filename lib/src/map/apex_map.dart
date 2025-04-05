@@ -26,7 +26,7 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     0,
   );
 
-  /// Public accessor for the canonical empty instance.
+  /// Public accessor for the canonical empty instance. 
   static ApexMapImpl<K, V> emptyInstance<K, V>() {
     // If the requested types are Never, return the canonical singleton directly.
     if (K == Never && V == Never) {
@@ -249,9 +249,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   bool containsValue(V value) {
     if (isEmpty) return false;
     // Requires iterating values - potentially expensive.
-    for (final entry in entries) {
-      // Uses efficient iterator
-      if (entry.value == value) {
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      if (iter.currentValue == value) { // Use currentValue
         return true;
       }
     }
@@ -515,8 +515,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   // Add stubs for other required Iterable methods
   @override
   bool any(bool Function(MapEntry<K, V> element) test) {
-    for (final entry in entries) {
-      if (test(entry)) return true;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      // Create entry only if test passes (or avoid if test uses key/value)
+      // Assuming test needs MapEntry for now
+      if (test(MapEntry(iter.currentKey, iter.currentValue))) return true;
     }
     return false;
   }
@@ -526,21 +529,37 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   bool contains(Object? element) {
     if (element is! MapEntry<K, V>) return false;
-    final value = this[element.key];
-    return value != null && value == element.value;
+    // Use efficient containsKey and direct value access
+    if (!containsKey(element.key)) return false;
+    final internalValue = this[element.key]; // Uses efficient operator []
+    return internalValue == element.value;
   }
 
   @override
   MapEntry<K, V> elementAt(int index) {
     RangeError.checkValidIndex(index, this);
     // Inefficient: relies on iterator
-    return entries.elementAt(index);
+    // Inefficient: still relies on iterator.elementAt or manual iteration
+    // Manual iteration to avoid creating intermediate list/iterator
+    int count = 0;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      if (count == index) {
+        return MapEntry(iter.currentKey, iter.currentValue); // Create entry at the end
+      }
+      count++;
+    }
+    // Should not be reached due to RangeError check, but needed for return type
+    throw StateError('Internal error: Index out of bounds after check');
   }
 
   @override
   bool every(bool Function(MapEntry<K, V> element) test) {
-    for (final entry in entries) {
-      if (!test(entry)) return false;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      // Create entry only if test fails (or avoid if test uses key/value)
+      // Assuming test needs MapEntry for now
+      if (!test(MapEntry(iter.currentKey, iter.currentValue))) return false;
     }
     return true;
   }
@@ -552,18 +571,26 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   MapEntry<K, V> get first {
     // Use iterator directly to avoid recursion with entries getter
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     if (!iter.moveNext()) {
       throw StateError("Cannot get first element of an empty map");
     }
-    return iter.current;
+    return MapEntry(iter.currentKey, iter.currentValue); // Create entry at the end
   }
 
   @override
   MapEntry<K, V> firstWhere(
     bool Function(MapEntry<K, V> element) test, {
     MapEntry<K, V> Function()? orElse,
-  }) => entries.firstWhere(test, orElse: orElse); // Delegate
+  }) {
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+      if (test(entry)) return entry;
+    }
+    if (orElse != null) return orElse();
+    throw StateError("No element matching test found");
+  }
   @override
   T fold<T>(
     T initialValue,
@@ -571,34 +598,64 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   ) {
     // Explicit implementation using iterator
     var value = initialValue;
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      value = combine(value, iter.current);
+      value = combine(value, MapEntry(iter.currentKey, iter.currentValue)); // Create entry for combine
     }
     return value;
   }
 
   @override
   Iterable<MapEntry<K, V>> followedBy(Iterable<MapEntry<K, V>> other) =>
-      entries.followedBy(other); // Delegate
+      // Explicit implementation to potentially optimize later if needed
+      return entries.followedBy(other);
   @override
   void forEach(void Function(MapEntry<K, V> element) action) =>
-      entries.forEach(action); // Delegate
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      action(MapEntry(iter.currentKey, iter.currentValue)); // Create entry for action
+    }
   @override
-  String join([String separator = '']) => entries.join(separator); // Delegate
+  String join([String separator = '']) {
+     // Inefficient: requires creating all entries first.
+     // Consider if a direct string build is better if performance critical.
+     return toList(growable: false).join(separator);
+  }
   @override
-  MapEntry<K, V> get last => entries.last; // Delegate
+  MapEntry<K, V> get last {
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    if (!iter.moveNext()) {
+       throw StateError("Cannot get last element of an empty map");
+    }
+    MapEntry<K, V> result = MapEntry(iter.currentKey, iter.currentValue);
+    while (iter.moveNext()) {
+      result = MapEntry(iter.currentKey, iter.currentValue);
+    }
+    return result;
+  }
   @override
   MapEntry<K, V> lastWhere(
     bool Function(MapEntry<K, V> element) test, {
     MapEntry<K, V> Function()? orElse,
-  }) => entries.lastWhere(test, orElse: orElse); // Delegate
+  }) {
+    MapEntry<K, V>? foundEntry;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+     while (iter.moveNext()) {
+       final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+       if (test(entry)) {
+         foundEntry = entry;
+       }
+     }
+     if (foundEntry != null) return foundEntry;
+     if (orElse != null) return orElse();
+     throw StateError("No element matching test found");
+  }
   @override
   Iterable<T> map<T>(T Function(MapEntry<K, V> e) convert) sync* {
     // Explicit implementation using iterator
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      yield convert(iter.current);
+      yield convert(MapEntry(iter.currentKey, iter.currentValue)); // Create entry for convert
     }
   }
 
@@ -608,34 +665,54 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     combine,
   ) {
     // Explicit implementation using iterator
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     if (!iter.moveNext()) {
       throw StateError("Cannot reduce empty collection");
     }
-    var value = iter.current;
+    // Use currentKey/Value for initial value, but still need MapEntry for combine's type
+    var value = MapEntry(iter.currentKey, iter.currentValue);
     while (iter.moveNext()) {
-      value = combine(value, iter.current);
+      value = combine(value, MapEntry(iter.currentKey, iter.currentValue)); // Create entry for combine
     }
     return value;
   }
 
   @override
-  MapEntry<K, V> get single => entries.single; // Delegate
+  MapEntry<K, V> get single {
+     final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+     if (!iter.moveNext()) throw StateError("Cannot get single element of an empty map");
+     final result = MapEntry(iter.currentKey, iter.currentValue);
+     if (iter.moveNext()) throw StateError("Map contains more than one element");
+     return result;
+  }
   @override
   MapEntry<K, V> singleWhere(
     bool Function(MapEntry<K, V> element) test, {
     MapEntry<K, V> Function()? orElse,
-  }) => entries.singleWhere(test, orElse: orElse); // Delegate
+  }) {
+    MapEntry<K, V>? foundEntry;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+      if (test(entry)) {
+        if (foundEntry != null) throw StateError("Multiple elements match test");
+        foundEntry = entry;
+      }
+    }
+    if (foundEntry != null) return foundEntry;
+    if (orElse != null) return orElse();
+    throw StateError("No element matching test found");
+  }
   @override
   Iterable<MapEntry<K, V>> skip(int count) sync* {
     // Explicit implementation using iterator
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     int skipped = 0;
     while (iter.moveNext()) {
       if (skipped < count) {
         skipped++;
       } else {
-        yield iter.current;
+        yield MapEntry(iter.currentKey, iter.currentValue); // Create entry to yield
       }
     }
   }
@@ -643,15 +720,29 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   Iterable<MapEntry<K, V>> skipWhile(
     bool Function(MapEntry<K, V> value) test,
-  ) => entries.skipWhile(test); // Delegate
+  ) sync* {
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    bool skipping = true;
+    while (iter.moveNext()) {
+      final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+      if (skipping) {
+        if (!test(entry)) {
+          skipping = false;
+          yield entry;
+        }
+      } else {
+        yield entry;
+      }
+    }
+  }
   @override
   Iterable<MapEntry<K, V>> take(int count) sync* {
     // Explicit implementation using iterator
     if (count <= 0) return;
-    final iter = iterator;
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     int taken = 0;
     while (iter.moveNext() && taken < count) {
-      yield iter.current;
+      yield MapEntry(iter.currentKey, iter.currentValue); // Create entry to yield
       taken++;
     }
   }
@@ -659,14 +750,24 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   Iterable<MapEntry<K, V>> takeWhile(
     bool Function(MapEntry<K, V> value) test,
-  ) => entries.takeWhile(test); // Delegate
+  ) sync* {
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+       final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+       if (test(entry)) {
+         yield entry;
+       } else {
+         break;
+       }
+    }
+  }
   @override
   List<MapEntry<K, V>> toList({bool growable = true}) {
     // Explicit implementation using iterator
     final list = <MapEntry<K, V>>[];
-    final iter = iterator; // Uses updated getter
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      list.add(iter.current);
+      list.add(MapEntry(iter.currentKey, iter.currentValue)); // Create entry to add
     }
     if (growable) {
       return list;
@@ -680,9 +781,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   Set<MapEntry<K, V>> toSet() {
     // Explicit implementation using iterator to avoid potential recursion
     final set = <MapEntry<K, V>>{};
-    final iter = iterator; // Uses updated getter
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      set.add(iter.current);
+      set.add(MapEntry(iter.currentKey, iter.currentValue)); // Create entry to add
     }
     return set;
   }
@@ -692,10 +793,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     bool Function(MapEntry<K, V> element) test,
   ) sync* {
     // Explicit implementation using iterator
-    final iter = iterator; // Uses updated getter
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      if (test(iter.current)) {
-        yield iter.current;
+      final entry = MapEntry(iter.currentKey, iter.currentValue); // Create entry for test
+      if (test(entry)) {
+        yield entry;
       }
     }
   }
@@ -703,12 +805,13 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   Iterable<T> whereType<T>() sync* {
     // Explicit implementation using iterator
-    final iter = iterator; // Uses updated getter
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
       // Need to check the type of the entry itself, not just yield
-      final current = iter.current;
-      if (current is T) {
-        yield current as T; // Add cast
+      // Need to create the entry to check its type
+      final currentEntry = MapEntry(iter.currentKey, iter.currentValue);
+      if (currentEntry is T) {
+        yield currentEntry as T;
       }
     }
   }
@@ -719,9 +822,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     // Create a standard mutable map
     final map = <K, V>{};
     // Use the efficient iterator
-    final iter = iterator; // Uses updated getter
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
     while (iter.moveNext()) {
-      map[iter.current.key] = iter.current.value;
+      map[iter.currentKey] = iter.currentValue; // Use direct key/value
     }
     return map;
   }
@@ -737,8 +840,9 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
   @override
   void forEachEntry(void Function(K key, V value) f) {
     // Uses the efficient iterator implicitly via 'entries'
-    for (final entry in entries) {
-      f(entry.key, entry.value);
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      f(iter.currentKey, iter.currentValue); // Use direct key/value
     }
   }
 
@@ -754,9 +858,10 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     champ.ChampNode<K2, V2>? mutableNewRoot;
     int newCount = 0;
 
-    for (final entry in entries) {
-      // Iterate original entries
-      final newEntry = convert(entry.key, entry.value);
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      // Iterate original entries using direct key/value
+      final newEntry = convert(iter.currentKey, iter.currentValue);
       final K2 newKey = newEntry.key;
       final V2 newValue = newEntry.value;
       final int newKeyHash = newKey.hashCode;
@@ -825,10 +930,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     int removalCount = 0;
     // Need to collect keys to remove first, as modifying during iteration is problematic
     final keysToRemove = <K>[];
-    for (final entry in entries) {
-      // Iterate original entries
-      if (predicate(entry.key, entry.value)) {
-        keysToRemove.add(entry.key);
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
+      // Iterate original entries using direct key/value
+      if (predicate(iter.currentKey, iter.currentValue)) {
+        keysToRemove.add(iter.currentKey);
       }
     }
 
@@ -874,20 +980,18 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
       if (isEmpty) return true; // Both empty and same length
 
       // Compare content (original logic)
-      try {
-        // TODO: Optimize equality check using tree comparison if possible.
-        for (final entry in entries) {
-          // Uses efficient iterator
-          // Use other[key] which should be efficient (O(logN))
-          if (!other.containsKey(entry.key) ||
-              other[entry.key] != entry.value) {
-            return false;
-          }
-        }
-        return true; // All entries matched
-      } catch (_) {
-        return false; // Error during comparison
+      // TODO: Optimize equality check using tree comparison if possible.
+      // Current implementation iterates and checks key/value pairs.
+      final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+      while (iter.moveNext()) {
+        final key = iter.currentKey;
+        final value = iter.currentValue;
+        // Use other[key] which should be efficient (O(logN))
+        // Need to handle the case where the key exists but value is null in 'other'
+        if (!other.containsKey(key)) return false;
+        if (other[key] != value) return false;
       }
+      return true; // All entries matched
     }
     // If not identical and not an ApexMap<K, V> with same content, return false
     return false;
@@ -907,12 +1011,11 @@ class ApexMapImpl<K, V> extends ApexMap<K, V> {
     }
 
     int result = 0;
-    for (final entry in entries) {
-      // Uses efficient iterator
+    final iter = iterator as ChampTrieIterator<K, V>; // Cast iterator
+    while (iter.moveNext()) {
       // Combine key and value hash codes for the entry's hash
-      int entryHash = entry.key.hashCode ^ entry.value.hashCode;
-      result =
-          result ^ entryHash; // XOR combine entry hashes (order-independent)
+      int entryHash = iter.currentKey.hashCode ^ iter.currentValue.hashCode;
+      result = result ^ entryHash; // XOR combine entry hashes (order-independent)
     }
     // Apply final avalanche step (similar to Objects.hash)
     result = 0x1fffffff & (result + ((0x03ffffff & result) << 3));

@@ -24,7 +24,28 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
   K? _internalCurrentKey;
   V? _internalCurrentValue;
 
+  /// Returns the key of the current element.
+  /// Throws a [StateError] if [moveNext] has not been called or has returned false.
+  K get currentKey {
+    if (!_hasCurrent) {
+      throw StateError('No current element');
+    }
+    return _internalCurrentKey as K;
+  }
+
+  /// Returns the value of the current element.
+  /// Throws a [StateError] if [moveNext] has not been called or has returned false.
+  V get currentValue {
+    if (!_hasCurrent) {
+      throw StateError('No current element');
+    }
+    return _internalCurrentValue as V;
+  }
+
   @override
+  @Deprecated(
+    'Creates a new MapEntry on each access. Use currentKey/currentValue for performance.',
+  )
   MapEntry<K, V> get current {
     if (!_hasCurrent) {
       throw StateError('No current element');
