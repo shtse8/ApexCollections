@@ -1,10 +1,10 @@
-<!-- Version: 1.1 | Last Updated: 2025-04-05 | Updated By: Cline -->
+<!-- Version: 1.2 | Last Updated: 2025-04-05 | Updated By: Cline -->
 # System Patterns: ApexCollections
 
 ## Core Architecture
 The library will consist of distinct, immutable collection classes (`ApexList`, `ApexMap`, etc.) built upon underlying persistent data structures.
 
-## Key Data Structures & File Structure (Updated: 2025-04-05 ~06:45 UTC+1)
+## Key Data Structures & File Structure (Updated: 2025-04-05 ~08:02 UTC+1)
 
 The underlying persistent data structures are critical for performance.
 
@@ -17,25 +17,28 @@ The underlying persistent data structures are critical for performance.
         -   `lib/src/list/rrb_tree_utils.dart`: Helper functions (concatenation, slicing, etc.).
     -   *Rationale:* Offers efficient O(log N) concatenation, slicing, and insertion/deletion at arbitrary indices, while maintaining fast O(log N) lookup and update. Performance benchmarks confirm its effectiveness for `ApexList`.
 -   **For `ApexMap`:**
-    -   **Attempted:** Compressed Hash-Array Mapped Prefix Trees (CHAMP).
-    -   *File Structure (CHAMP Attempt):*
-        -   `lib/src/map/champ_node_base.dart`: Abstract `ChampNode`, result types.
-        -   `lib/src/map/champ_bitmap_node.dart`: Abstract `ChampBitmapNode`.
-        -   `lib/src/map/champ_empty_node.dart`: `ChampEmptyNode` implementation.
-        -   `lib/src/map/champ_data_node.dart`: `ChampDataNode` implementation.
-        -   `lib/src/map/champ_collision_node.dart`: `ChampCollisionNode` implementation.
-        -   `lib/src/map/champ_sparse_node.dart`: `ChampSparseNode` implementation (extends `ChampBitmapNode`).
-        -   `lib/src/map/champ_array_node_base.dart`: Abstract `ChampArrayNode` (extends `ChampBitmapNode`).
-        -   `lib/src/map/champ_array_node_impl.dart`: Concrete `ChampArrayNodeImpl`.
-        -   `lib/src/map/champ_array_node_*.dart` (e.g., `_get`, `_add`): Extension methods for `ChampArrayNode`. (Note: Splitting via extensions was reverted for `ApexMapImpl` itself due to issues, but kept for node logic for now).
-        -   `lib/src/map/champ_utils.dart`: Constants, helper functions (`bitCount`, `indexFragment`), `TransientOwner`.
-        -   `lib/src/map/champ_merging.dart`: Logic for merging entries/nodes.
-        -   `lib/src/map/champ_iterator.dart`: CHAMP Trie iterator.
+    -   **Attempted (Deprecated):** Compressed Hash-Array Mapped Prefix Trees (CHAMP).
+    -   *File Structure (CHAMP Attempt - Moved):*
+        -   `lib/src/map_champ/apex_map.dart`: Main `ApexMap` implementation (CHAMP).
+        -   `lib/src/map_champ/apex_map_impl.dart`: Internal implementation details.
+        -   `lib/src/map_champ/apex_map_base.dart`: Base class.
+        -   `lib/src/map_champ/champ_node_base.dart`: Abstract `ChampNode`, result types.
+        -   `lib/src/map_champ/champ_bitmap_node.dart`: Abstract `ChampBitmapNode`.
+        -   `lib/src/map_champ/champ_empty_node.dart`: `ChampEmptyNode` implementation.
+        -   `lib/src/map_champ/champ_data_node.dart`: `ChampDataNode` implementation.
+        -   `lib/src/map_champ/champ_collision_node.dart`: `ChampCollisionNode` implementation.
+        -   `lib/src/map_champ/champ_sparse_node.dart`: `ChampSparseNode` implementation (extends `ChampBitmapNode`).
+        -   `lib/src/map_champ/champ_array_node_base.dart`: Abstract `ChampArrayNode` (extends `ChampBitmapNode`).
+        -   `lib/src/map_champ/champ_array_node_impl.dart`: Concrete `ChampArrayNodeImpl`.
+        -   `lib/src/map_champ/champ_*_node_*.dart`: Helper/extension files for node logic.
+        -   `lib/src/map_champ/champ_utils.dart`: Constants, helper functions (`bitCount`, `indexFragment`), `TransientOwner`.
+        -   `lib/src/map_champ/champ_merging.dart`: Logic for merging entries/nodes.
+        -   `lib/src/map_champ/champ_iterator.dart`: CHAMP Trie iterator.
         -   *Initial Rationale:* Theoretical advantages over HAMT in cache locality, memory usage, and iteration speed.
-        -   *Outcome:* While `addAll`, `remove`, and `update` performed well, the Dart implementation faced significant challenges in achieving competitive iteration performance (~2.5x slower than FIC's HAMT). Multiple optimization attempts failed due to complexity and introducing logic errors. `add` and `lookup` were also slower than FIC.
+        -   *Outcome:* While `addAll`, `remove`, and `update` performed well, the Dart implementation faced significant challenges in achieving competitive iteration performance (~2.9x slower than FIC's HAMT). Multiple optimization attempts failed due to complexity and introducing logic errors. `add` and `lookup` were also slower than FIC.
     -   **Next Candidate:** Hash Array Mapped Tries (HAMT).
         -   *Rationale:* Used by the primary competitor (`fast_immutable_collections`) and demonstrates better iteration and lookup performance in that context. While potentially slower in some operations like `remove` compared to CHAMP, its overall performance profile, particularly for iteration and lookup, appears more promising given the difficulties encountered with CHAMP in Dart.
-        -   *Status:* Research and design phase (Phase 4.5) initiated to evaluate and potentially implement HAMT for `ApexMap`.
+        -   *Status:* Research and design phase (Phase 4.5) initiated to evaluate and potentially implement HAMT for `ApexMap` in `lib/src/map_hamt/`.
 
 The choice of data structure aims for the best *overall* performance profile across common operations (add, remove, update, lookup, iteration) for typical Dart use cases, acknowledging that trade-offs may exist.
 

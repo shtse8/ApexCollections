@@ -3,7 +3,7 @@ library;
 
 import 'dart:math'; // For Random (potentially needed by Iterable methods like shuffle)
 import 'package:collection/collection.dart'; // For ListEquality
-import 'apex_map_api.dart';
+import '../map/apex_map_api.dart';
 import 'champ_node_base.dart' as champ;
 import 'champ_empty_node.dart';
 import 'champ_data_node.dart';

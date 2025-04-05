@@ -1,7 +1,7 @@
-<!-- Version: 1.16 | Last Updated: 2025-04-05 | Updated By: Cline -->
+<!-- Version: 1.17 | Last Updated: 2025-04-05 | Updated By: Cline -->
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-05 ~07:38 UTC+1)
+## Current Status (Timestamp: 2025-04-05 ~08:02 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -20,17 +20,12 @@
         -   Fixed `champ_node.dart` structural errors (missing `ChampArrayNode` definition, misplaced methods).
         -   Refactored `ChampTrieIterator` logic to fix test failures (Reverted optimization attempts).
         -   Split `apex_map_test.dart` and `apex_list_test.dart` into smaller files based on test groups to adhere to <500 LoC rule.
-        -   **Split `rrb_node.dart` into `rrb_node_base.dart`, `rrb_internal_node.dart`, `rrb_leaf_node.dart`.**
-        -   **Split `champ_array_node.dart` into `champ_array_node_base.dart`, `champ_array_node_impl.dart`, and extension files (`_get`, `_add`, `_remove`, `_update`, `_mutation_utils`).**
-        -   **Reverted `ApexMapImpl` splitting due to extension/private access issues. Merged methods back into `apex_map.dart`.** (Note: `apex_map.dart` now exceeds 500 LoC, deferred).
+        -   Split `rrb_node.dart` into `rrb_node_base.dart`, `rrb_internal_node.dart`, `rrb_leaf_node.dart`.
+        -   Split `champ_array_node.dart` into `champ_array_node_base.dart`, `champ_array_node_impl.dart`, and extension files (`_get`, `_add`, `_remove`, `_update`, `_mutation_utils`).
+        -   Reverted `ApexMapImpl` splitting due to extension/private access issues. Merged methods back into `apex_map.dart`.
+        -   **Refactored Map Folder Structure:** Moved CHAMP implementation from `lib/src/map/` to `lib/src/map_champ/`. Created `lib/src/map_hamt/` for future HAMT implementation. Updated imports.
     -   **Testing Issues:**
-        -   **(Resolved)** File writing tools seem stable.
-        -   **(Resolved)** Map Test Load Error (`ApexMapImpl.add` type error) and subsequent test failures fixed. All map tests pass after splitting.
-        -   **(Resolved)** List Test Runtime Error: The `StateError: Cannot rebalance incompatible nodes...` in `RrbInternalNode._rebalanceOrMerge` has been addressed by implementing a plan-based rebalancing strategy (`_createRebalancePlan`, `_executeRebalancePlan`) for the immutable path. All list tests pass after splitting.
-        -   **(Resolved)** The transient path for `_rebalanceOrMerge` (plan-based case) now uses `_executeTransientRebalancePlan` to mutate nodes in place.
-        -   **(Resolved)** Persistent Dart Analyzer errors related to `ChampArrayNode` resolved by fixing `champ_node.dart` structure, clearing `.dart_tool`, and using `git stash pop`.
-        -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass with the reverted (slower) iterator.**
-        -   **(Resolved)** Errors related to splitting `rrb_node.dart` and `champ_array_node.dart` fixed.
+        -   **(Resolved)** All previous issues resolved.
     -   **Performance Status (Updated 2025-04-05 ~07:38 UTC+1 - After latest benchmark run):**
         -   **ApexMap (CHAMP - Size: 10k):**
             -   `add`: ~4.18 us (FIC: ~0.19 us)
@@ -55,22 +50,24 @@
 
 ## Current Focus
 
--   **ApexList:** Core logic stable. `rrb_node.dart` split. Performance generally strong in structural modifications, needs review for iteration/conversion.
--   **ApexMap:** CHAMP implementation abandoned due to performance issues (especially iteration). `champ_*.dart` files remain but are effectively deprecated. `ApexMapImpl` splitting reverted.
+-   **ApexList:** Core logic stable. Performance generally strong in structural modifications, needs review for iteration/conversion.
+-   **ApexMap:** CHAMP implementation moved to `lib/src/map_champ/` and deprecated. `lib/src/map_hamt/` created for new implementation.
 -   **Testing:** Test files split. All tests pass.
 -   **Benchmarking:** Latest benchmarks run, confirming CHAMP issues and providing current `ApexList` numbers.
 -   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap` (CHAMP version).
--   **Code Structure:** Addressed LoC limit for node files and test files. Deferred for `apex_map.dart` and `apex_list.dart`.
+-   **Code Structure:** Map folder structure refactored. Addressed LoC limit for node files and test files. Deferred for `apex_map.dart` and `apex_list.dart`.
 
 ## Next Immediate Steps
 
 1.  ... (Previous steps DONE) ...
-23. **(DONE)** Update Memory Bank: Record node file splitting.
-24. **(DONE)** Commit Changes: Commit node file splitting changes.
-25. **(DONE)** Run Benchmarks.
-26. **Update Memory Bank:** Record latest benchmark results. (This step)
-27. **Commit Changes:** Commit Memory Bank updates.
-28. **Phase 4.5:** Begin HAMT research/design, focusing on efficient iterator.
+29. **(DONE)** Commit Changes: Commit node file splitting changes.
+30. **(DONE)** Run Benchmarks.
+31. **(DONE)** Update Memory Bank: Record latest benchmark results.
+32. **(DONE)** Commit Changes: Commit Memory Bank updates.
+33. **(DONE)** Refactor Map Folder Structure (Create `map_champ`, `map_hamt`, move files, update imports).
+34. **Update Memory Bank:** Record folder structure refactoring. (This step)
+35. **Commit Changes:** Commit folder structure refactoring and Memory Bank updates.
+36. **Phase 4.5:** Begin HAMT research/design, focusing on efficient iterator.
 
 ## Open Questions / Decisions
 
