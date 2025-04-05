@@ -16,7 +16,8 @@ class HamtIterator<K, V> {
 
   /// Creates an iterator starting from the root node.
   HamtIterator(HamtNode<K, V> rootNode) {
-    if (!rootNode.isEmptyNode) {
+    // Use 'is' check until isEmptyNode is defined or use size check
+    if (rootNode is! HamtEmptyNode<K, V>) {
       _stack.addFirst(rootNode);
     }
   }
@@ -56,13 +57,16 @@ class HamtIterator<K, V> {
     while (_stack.isNotEmpty) {
       final element = _stack.removeFirst(); // Pop from stack
 
-      if (element is HamtDataNode<K, V>) {
-        // Found a standalone data node
-        _internalCurrentKey = element.dataKey;
-        _internalCurrentValue = element.dataValue;
-        _hasCurrent = true;
-        return true;
-      } else if (element is List<Object?> && element.length == 2) {
+      // TODO: Uncomment when HamtDataNode is defined
+      // if (element is HamtDataNode<K, V>) {
+      //   // Found a standalone data node
+      //   _internalCurrentKey = element.dataKey;
+      //   _internalCurrentValue = element.dataValue;
+      //   _hasCurrent = true;
+      //   return true;
+      // } else
+      if (element is List<Object?> && element.length == 2) {
+        // Corrected: Changed from '} else if' to 'if'
         // Found a [key, value] pair pushed from a BitmapNode
         _internalCurrentKey = element[0] as K;
         _internalCurrentValue = element[1] as V;
@@ -74,59 +78,61 @@ class HamtIterator<K, V> {
         _internalCurrentValue = element.value;
         _hasCurrent = true;
         return true;
-      } else if (element is HamtCollisionNode<K, V>) {
-        // Push all entries from the collision node onto the stack (reverse order)
-        // Decide whether to push MapEntry or [K, V] list here.
-        // Pushing MapEntry is simpler as CollisionNode stores them.
-        for (int i = element.entries.length - 1; i >= 0; i--) {
-          _stack.addFirst(element.entries[i]);
-        }
-        continue; // Process the first pushed entry
-      } else if (element is HamtBitmapNodeImpl<K, V>) {
-        // Use concrete type
-        // --- Process Bitmap Node (HAMT Strategy: Single list with [K,V] or Node) ---
-        // Push nodes first (reverse bit order), then data (reverse bit order)
-        // because stack is LIFO, data will be processed first.
-
-        final bitmap = element.bitmap;
-        final content = element.content;
-
-        // 1. Push Nodes onto stack (reverse bit order)
-        for (int i = 31; i >= 0; i--) {
-          final bitpos = 1 << i;
-          if ((bitmap & bitpos) != 0) {
-            final sparseIdx = element.sparseIndex(bitpos);
-            if (sparseIdx < content.length) {
-              final item = content[sparseIdx];
-              if (item is HamtNode<K, V>) {
-                // Check if it's a node
-                _stack.addFirst(item);
-              }
-              // If it's a List<Object?>, it's data, handle in next loop
-            } else {
-              print("Error: Iterator node sparse index out of bounds (HAMT)");
-            }
-          }
-        }
-
-        // 2. Push Data ([K, V] lists) onto stack (reverse bit order)
-        for (int i = 31; i >= 0; i--) {
-          final bitpos = 1 << i;
-          if ((bitmap & bitpos) != 0) {
-            final sparseIdx = element.sparseIndex(bitpos);
-            if (sparseIdx < content.length) {
-              final item = content[sparseIdx];
-              if (item is List<Object?> && item.length == 2) {
-                // Check if it's data ([K,V] list)
-                _stack.addFirst(item); // Push the [K, V] list
-              }
-              // If it's a HamtNode, it was handled in the previous loop
-            } else {
-              print("Error: Iterator data sparse index out of bounds (HAMT)");
-            }
-          }
-        }
-        continue; // Process the first pushed child/data
+        // TODO: Uncomment when HamtCollisionNode is defined
+        // } else if (element is HamtCollisionNode<K, V>) {
+        //   // Push all entries from the collision node onto the stack (reverse order)
+        //   // Decide whether to push MapEntry or [K, V] list here.
+        //   // Pushing MapEntry is simpler as CollisionNode stores them.
+        //   for (int i = element.entries.length - 1; i >= 0; i--) {
+        //     _stack.addFirst(element.entries[i]);
+        //   }
+        //   continue; // Process the first pushed entry
+        // TODO: Uncomment and adapt when HamtBitmapNodeImpl (or equivalent) is defined
+        // } else if (element is HamtBitmapNodeImpl<K, V>) {
+        //   // Use concrete type
+        //   // --- Process Bitmap Node (HAMT Strategy: Single list with [K,V] or Node) ---
+        //   // Push nodes first (reverse bit order), then data (reverse bit order)
+        //   // because stack is LIFO, data will be processed first.
+        //
+        //   final bitmap = element.bitmap;
+        //   final content = element.content;
+        //
+        //   // 1. Push Nodes onto stack (reverse bit order)
+        //   for (int i = 31; i >= 0; i--) {
+        //     final bitpos = 1 << i;
+        //     if ((bitmap & bitpos) != 0) {
+        //       final sparseIdx = element.sparseIndex(bitpos);
+        //       if (sparseIdx < content.length) {
+        //         final item = content[sparseIdx];
+        //         if (item is HamtNode<K, V>) {
+        //           // Check if it's a node
+        //           _stack.addFirst(item);
+        //         }
+        //         // If it's a List<Object?>, it's data, handle in next loop
+        //       } else {
+        //         print("Error: Iterator node sparse index out of bounds (HAMT)");
+        //       }
+        //     }
+        //   }
+        //
+        //   // 2. Push Data ([K, V] lists) onto stack (reverse bit order)
+        //   for (int i = 31; i >= 0; i--) {
+        //     final bitpos = 1 << i;
+        //     if ((bitmap & bitpos) != 0) {
+        //       final sparseIdx = element.sparseIndex(bitpos);
+        //       if (sparseIdx < content.length) {
+        //         final item = content[sparseIdx];
+        //         if (item is List<Object?> && item.length == 2) {
+        //           // Check if it's data ([K,V] list)
+        //           _stack.addFirst(item); // Push the [K, V] list
+        //         }
+        //         // If it's a HamtNode, it was handled in the previous loop
+        //       } else {
+        //         print("Error: Iterator data sparse index out of bounds (HAMT)");
+        //       }
+        //     }
+        //   }
+        //   continue; // Process the first pushed child/data
       }
       // Ignore HamtEmptyNode
     }
