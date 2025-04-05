@@ -1,6 +1,6 @@
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-05 ~12:50 UTC+1)
+## Current Status (Timestamp: 2025-04-05 ~01:33 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -25,17 +25,17 @@
         -   **(Resolved)** The transient path for `_rebalanceOrMerge` (plan-based case) now uses `_executeTransientRebalancePlan` to mutate nodes in place.
         -   **(Resolved)** Persistent Dart Analyzer errors related to `ChampArrayNode` resolved by fixing `champ_node.dart` structure, clearing `.dart_tool`, and using `git stash pop`.
         -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass with the reverted (slower) iterator.**
-    -   **Performance Status (Updated 2025-04-05 ~12:50 UTC+1 - After reverting iterator optimization):**
+    -   **Performance Status (Updated 2025-04-05 ~01:33 UTC+1 - After iterator refactoring attempt):**
         -   **ApexMap (Size: 10k):**
-            -   `add`: ~4.34 us (Stable, slower than Native/FIC)
-            -   `addAll`: ~34.00 us (Stable, Excellent)
-            -   `lookup[]`: ~0.22 us (Stable, slower than Native/FIC)
-            -   `remove`: ~3.88 us (Stable, much faster than FIC)
-            -   `update`: ~8.52 us (Stable, faster than FIC)
-            -   `iterateEntries`: **~3042 us** (Stable, but **~2.5x slower than FIC** ~1235 us)
-            -   `toMap`: **~9099 us** (Stable, but slower than FIC ~6915 us)
-            -   `fromMap`: ~8979 us (Stable, improved from initial, but much slower than FIC ~1830 us)
-            -   *Conclusion:* While `addAll`, `remove`, and `update` show strong performance compared to FIC, the critical `iterateEntries` operation is significantly slower (~2.5x). `add`, `lookup`, and `fromMap` also lag behind FIC. The CHAMP data structure, despite theoretical advantages, has proven difficult to optimize for iteration performance in our Dart implementation.
+            -   `add`: ~4.80 us (Slightly slower than previous)
+            -   `addAll`: ~36.39 us (Slightly slower than previous, still Excellent)
+            -   `lookup[]`: ~0.22 us (Stable)
+            -   `remove`: ~4.21 us (Slightly slower than previous, still much faster than FIC)
+            -   `update`: ~9.53 us (Slightly slower than previous, still faster than FIC)
+            -   `iterateEntries`: **~3485 us** (**Worsened**, now **~2.95x slower than FIC** ~1181 us)
+            -   `toMap`: **~10907 us** (**Worsened**, now ~1.69x slower than FIC ~6454 us)
+            -   `fromMap`: ~9888 us (Slightly slower than previous)
+            -   *Conclusion:* The iterator refactoring (avoiding MapEntry in moveNext, changing traversal order) **failed to improve iteration performance and slightly worsened most operations**. The core performance issues with CHAMP in Dart persist, particularly the iteration bottleneck likely related to `iterator.current` overhead or fundamental structure/traversal costs.
         -   **ApexList (Size: 10k):** (No recent changes)
             -   `add`: ~26.74 us (Stable, much faster than FIC)
             -   `addAll`: ~32.34 us (Stable, Excellent)
@@ -54,8 +54,8 @@
 -   **ApexList:** Core logic stable.
 -   **ApexMap:** Fixed structural errors in `champ_node.dart`. Updated Dartdocs.
 -   **Testing:** Refactored `ChampTrieIterator` to fix map test failures. **All tests now pass.**
--   **Benchmarking:** Attempted several `ApexMap` iterator optimizations (state machine, List stack, reduced bitCount calls, `_BitmapPayloadRef` to avoid temporary `MapEntry`) - **all failed due to introducing logic errors and were reverted.** Attempted element hash code consolidation - failed and reverted. Optimized `ApexMapImpl._buildNode` second pass - Success (`fromMap` improved). **Final benchmarks run with the correct but unoptimized iterator.**
--   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap` based on latest changes and benchmarks.
+-   **Benchmarking:** Attempted several `ApexMap` iterator optimizations (state machine, List stack, reduced bitCount calls, `_BitmapPayloadRef` to avoid temporary `MapEntry`) - **all failed due to introducing logic errors and were reverted.** Attempted element hash code consolidation - failed and reverted. Optimized `ApexMapImpl._buildNode` second pass - Success (`fromMap` improved). **Refactored iterator again (avoid MapEntry in moveNext, change traversal order) - benchmarks show performance worsened.**
+-   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap`. Added docs for new iterator getters.
 
 ## Next Immediate Steps
 
@@ -80,5 +80,5 @@
 ## Open Questions / Decisions
 
 -   Need for transient/mutable builders? (Decision remains: Low priority for Map, explore for List later)
--   Further `ApexMap` CHAMP optimization? **(Decision: Abandoned due to persistent iteration performance issues and complexity)**
--   How to best approach HAMT research and implementation for `ApexMap`?
+-   Further `ApexMap` CHAMP optimization? **(Decision: Re-abandoned after refactoring failed to improve performance)**
+-   How to best approach HAMT research and implementation for `ApexMap`? (Focus on iterator design avoiding temporary objects)

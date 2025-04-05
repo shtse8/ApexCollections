@@ -1,6 +1,6 @@
 # Progress: ApexCollections
 
-## Current Status (Timestamp: 2025-04-05 ~12:51 UTC+1)
+## Current Status (Timestamp: 2025-04-05 ~01:34 UTC+1)
 
 **Phase 1: Research & Benchmarking COMPLETE.** Foundational research conducted, data structures selected (RRB-Trees, CHAMP Tries), baseline benchmarks established.
 **Phase 2: Core Design & API Definition COMPLETE.** Public APIs for `ApexList` and `ApexMap` defined. Core node structure files outlined. Basic implementation classes created. `toMap` added to `ApexMap`.
@@ -15,11 +15,11 @@
 -   Basic Dart package structure confirmed (`pubspec.yaml`, etc.).
 -   Public API definitions for `ApexList` (`lib/src/list/apex_list_api.dart`) and `ApexMap` (`lib/src/map/apex_map_api.dart`).
 -   Node structures implemented for RRB-Trees (`lib/src/list/rrb_node.dart`) and CHAMP Tries (`lib/src/map/champ_node.dart`), including transient mutation logic. **(Refactored & Fixed `champ_node.dart` structure)**
--   `ApexMapImpl` (CHAMP version) methods implemented. `addAll`, `remove`, `update` show strong performance vs FIC. However, `add`, `lookup`, `fromMap`, `iterateEntries`, and `toMap` are significantly slower than FIC. Iteration performance is the primary bottleneck (~2.5x slower than FIC).
+-   `ApexMapImpl` (CHAMP version) methods implemented and re-verified for accuracy. `addAll`, `remove`, `update` show strong performance vs FIC. However, `add`, `lookup`, `fromMap`, `iterateEntries`, and `toMap` are significantly slower than FIC. Iteration performance remains the primary bottleneck (**~2.95x slower** than FIC after latest refactoring attempt).
 -   `ApexListImpl` methods implemented. `addAll` optimized using concatenation strategy. `fromIterable` uses recursive concatenation strategy. `operator+` uses efficient O(log N) concatenation. `removeWhere` reverted to immutable filter. `sublist` uses efficient O(log N) tree slicing. `toList` refactored to use iterator. **(Refactored - utils extracted, `addAll` optimized, `fromIterable` strategy changed)**
--   Correct but slow iterator implemented for `ApexMapImpl` (CHAMP version) (`lib/src/map/champ_iterator.dart`). Optimization attempts failed. Efficient iterator for `ApexListImpl` (`_RrbTreeIterator`) implemented.
--   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases. **All tests now pass after iterator fix.**
--   Benchmark suite created (`benchmark/`). Final benchmarks run for CHAMP `ApexMap` confirm performance issues.
+-   Iterator for `ApexMapImpl` (CHAMP version) (`lib/src/map/champ_iterator.dart`) refactored multiple times. Initial optimization attempts failed. Latest refactoring (avoid MapEntry in moveNext, change traversal order) completed, but worsened performance. Efficient iterator for `ApexListImpl` (`_RrbTreeIterator`) implemented.
+-   Unit tests added and improved for `ApexMap` and `ApexList` core methods, iterators, equality, hash codes, and edge cases. **All tests pass after latest iterator refactoring.**
+-   Benchmark suite created (`benchmark/`). Benchmarks re-run after iterator refactoring confirm performance worsened.
 
 ## What's Left to Build (High-Level)
 
@@ -27,8 +27,8 @@
 -   **Phase 2:** Core Design & API Definition **(DONE)**
 -   **Phase 3:** Implementation & Unit Testing **(DONE - Known Issue Deferred)**
 -   **Phase 4:** Refactoring & Debugging **(COMPLETE - Core bugs fixed, CHAMP iterator reverted to correct but slow version, all tests pass)**
--   **Phase 4:** Performance Optimization & Benchmarking (CHAMP Attempt) **(COMPLETE - Final benchmarks run, optimization attempts failed, CHAMP abandoned for Map)**
--   **(NEW)** **Phase 4.5:** Research & Design (HAMT for `ApexMap`). **(Next Phase)**
+-   **Phase 4:** Performance Optimization & Benchmarking (CHAMP Attempt) **(COMPLETE - Final benchmarks run, multiple optimization/refactoring attempts failed, CHAMP re-abandoned for Map)**
+-   **Phase 4.5:** Research & Design (HAMT for `ApexMap`). **(Confirmed Next Phase)**
 -   **Phase 5:** Implementation & Unit Testing (HAMT `ApexMap`).
 -   **Phase 6:** Documentation & Examples (GitHub Pages, `dart doc`).
 -   **Phase 7:** CI/CD & Publishing (`pub.dev`).
@@ -39,12 +39,12 @@
 -   **(Resolved)** `champ_node.dart` structural errors fixed.
 -   **(Resolved)** Persistent Dart Analyzer errors resolved.
 -   **(Resolved)** `ApexMap` test failures resolved by reverting CHAMP iterator optimizations.
--   **(Decision: Abandon CHAMP)** `ApexMap` (CHAMP version) performance issues:
-    -   `iterateEntries`: ~3042 us (**~2.5x slower** than FIC ~1235 us). Multiple optimization attempts failed. **Primary reason for abandoning CHAMP.**
-    -   `toMap`: ~9099 us (Slower than FIC ~6915 us).
-    -   `add`: ~4.34 us (Slower than FIC ~0.22 us).
+-   **(Decision: Re-abandon CHAMP)** `ApexMap` (CHAMP version) performance issues (Updated 2025-04-05 ~01:33 UTC+1):
+    -   `iterateEntries`: ~3485 us (**~2.95x slower** than FIC ~1181 us). Multiple optimization/refactoring attempts failed. **Primary reason for abandoning CHAMP.**
+    -   `toMap`: ~10907 us (~1.69x slower than FIC ~6454 us).
+    -   `add`: ~4.80 us (Slower than FIC ~0.19 us).
     -   `lookup[]`: ~0.22 us (Slower than FIC ~0.06 us).
-    -   `fromMap`: ~8979 us (Much slower than FIC ~1830 us).
+    -   `fromMap`: ~9888 us (Much slower than FIC ~2031 us).
 -   **(Stable - Accepted)** `ApexList` performance remains stable and generally competitive or superior to FIC.
 
 ## Next Milestones (Reflecting Active Context)
@@ -62,6 +62,14 @@
 11. **(DONE)** Revert iterator optimization attempt (using `write_to_file`).
 12. **(DONE)** Verify tests pass with reverted iterator.
 13. **(DONE)** Run final benchmarks with correct (but slow) CHAMP iterator.
-14. **(DONE)** Update Memory Bank (`activeContext.md`, `progress.md`). (This step)
-15. **Commit Changes:** Commit the current working state (correct but slow CHAMP iterator).
-16. **Phase 4.5:** Begin research into HAMT for `ApexMap`.
+14. **(DONE)** Update Memory Bank (`activeContext.md`, `progress.md`, `systemPatterns.md`).
+15. **(DONE)** Commit Changes (correct but slow CHAMP iterator).
+16. **(DONE)** Research HAMT (Initial search, OOPSLA'15, FIC, lean-map analysis).
+17. **(DONE)** Re-check CHAMP Code Accuracy.
+18. **(DONE)** Refactor Iterator (avoid MapEntry in moveNext, change traversal order).
+19. **(DONE)** Commit Iterator Refactor.
+20. **(DONE)** Run Tests (Passed).
+21. **(DONE)** Run Benchmarks (Iterator refactor failed).
+22. **(DONE)** Update Memory Bank (`activeContext.md`, `progress.md`). (This step)
+23. **Commit Changes:** Commit current state (including failed iterator refactor).
+24. **Phase 4.5:** Reconfirm pivot and begin HAMT research/design, focusing on efficient iterator.
