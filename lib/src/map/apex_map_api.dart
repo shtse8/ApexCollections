@@ -1,6 +1,7 @@
 // Remove unused: import 'package:meta/meta.dart';
-import 'apex_map.dart'; // Contains ApexMapImpl and its emptyInstance
-// Remove unused import: 'champ_node.dart' as champ;
+// Import the new HAMT implementation
+import '../map_hamt/apex_map_hamt.dart';
+// Old CHAMP import removed: import 'apex_map.dart';
 
 /// An immutable, persistent map implementation based on Compressed Hash-Array Mapped Prefix Tries (CHAMP).
 ///
@@ -24,7 +25,7 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// final emptyMap = ApexMap<String, int>.empty();
   /// print(emptyMap.isEmpty); // true
   /// ```
-  factory ApexMap.empty() => ApexMapImpl.emptyInstance<K, V>();
+  factory ApexMap.empty() => ApexMapHamt.empty<K, V>();
 
   /// Const generative constructor for subclasses.
   ///
@@ -47,8 +48,8 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// print(apexMap['a']); // 1
   /// ```
   factory ApexMap.from(Map<K, V> map) {
-    // Delegate to the implementation's factory constructor.
-    return ApexMapImpl.fromMap(map);
+    // Delegate to the HAMT implementation's factory constructor.
+    return ApexMapHamt.from(map);
   }
 
   /// Creates an `ApexMap` from an iterable of [MapEntry] instances.
@@ -62,12 +63,9 @@ abstract class ApexMap<K, V> implements Iterable<MapEntry<K, V>> {
   /// print(apexMap['y']); // 20
   /// ```
   factory ApexMap.fromEntries(Iterable<MapEntry<K, V>> entries) {
-    // Implementation uses transient building for efficiency.
-    // Delegate to the implementation's factory constructor.
-    // Note: ApexMapImpl.fromEntries is not explicitly defined.
-    // This implementation creates an intermediate Map, which might not be optimal.
-    // It also inherits the performance issue from ApexMap.fromMap.
-    return ApexMapImpl.fromMap(Map.fromEntries(entries));
+    // Delegate to the HAMT implementation's factory constructor.
+    return ApexMapHamt.fromEntries(entries);
+    // Note: The previous implementation using Map.fromEntries was inefficient.
   }
 
   // --- Core Properties ---

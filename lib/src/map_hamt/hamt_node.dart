@@ -1,45 +1,47 @@
-/// Defines the basic node structures for a potential HAMT implementation.
-library apex_collections.src.map_hamt.hamt_node;
+import 'package:meta/meta.dart';
+import 'package:collection/collection.dart'; // For SetEquality, DeepCollectionEquality
 
-import 'dart:collection'; // For MapEntry
-// Reuse TransientOwner and utils from CHAMP implementation for now
-import '../map/champ_utils.dart';
-import '../map/champ_node_base.dart'
-    show
-        ChampAddResult,
-        ChampRemoveResult,
-        ChampUpdateResult; // Reuse result types for now
+// Helper function for bitCount as a workaround for potential analyzer issues
+int _bitCount(int n) {
+  int count = 0;
+  while (n > 0) {
+    n &= (n - 1); // Clear the least significant bit set
+    count++;
+  }
+  return count;
+}
 
-// --- Base HAMT Node ---
+// Placeholder for Transient Ownership if needed later
+class TransientOwner {
+  bool _isOwned = true;
+  bool get isOwned => _isOwned;
 
-/// Abstract base class for nodes in a Hash Array Mapped Trie (HAMT).
+  void disown() {
+    _isOwned = false;
+  }
+}
+
+/// Base class for all HAMT node types.
+@immutable
 abstract class HamtNode<K, V> {
-  /// Optional owner for transient nodes.
-  TransientOwner? _owner;
+  const HamtNode();
 
-  /// Constructor for subclasses.
-  HamtNode([this._owner]);
+  // TODO: Define core node operations (get, add, remove, update)
+  // These will likely return modification results (e.g., NodeModified, ValueSet, etc.)
 
-  /// Checks if the node is currently mutable and belongs to the given [owner].
-  bool isTransient(TransientOwner? owner) => _owner != null && _owner == owner;
+  // TODO: Define properties needed for iteration (e.g., size, children, data)
 
-  /// Returns an immutable version of this node.
-  HamtNode<K, V> freeze(TransientOwner? owner);
+  /// Placeholder for checking if the node is empty.
+  bool get isEmpty => true; // Default for base, override in concrete classes
 
-  /// Indicates if this is the canonical empty node.
-  bool get isEmptyNode => false;
+  /// Placeholder for node size (number of key-value pairs).
+  int get size => 0; // Default for base, override in concrete classes
 
-  // --- Core Operations (Abstract) ---
-
-  /// Returns the value associated with the [key], or `null` if not found.
+  /// Placeholder for getting a value by key and hash.
   V? get(K key, int hash, int shift);
 
-  /// Checks if the [key] exists within the subtree rooted at this node.
-  bool containsKey(K key, int hash, int shift);
-
-  /// Adds or updates a key-value pair. Returns the new node and status.
-  /// Note: Return type might need adjustment from CHAMP's. Using placeholder.
-  ({HamtNode<K, V> node, bool didAdd}) add(
+  /// Placeholder for adding or updating a key-value pair.
+  HamtNode<K, V> add(
     K key,
     V value,
     int hash,
@@ -47,426 +49,496 @@ abstract class HamtNode<K, V> {
     TransientOwner? owner,
   );
 
-  /// Removes a [key]. Returns the new node and status.
-  /// Note: Return type might need adjustment from CHAMP's. Using placeholder.
-  ({HamtNode<K, V> node, bool didRemove}) remove(
-    K key,
-    int hash,
-    int shift,
-    TransientOwner? owner,
-  );
+  /// Placeholder for removing a key.
+  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner);
 
-  /// Updates the value associated with [key]. Returns the new node and status.
-  /// Note: Return type might need adjustment from CHAMP's. Using placeholder.
-  ({HamtNode<K, V> node, bool sizeChanged}) update(
-    K key,
-    int hash,
-    int shift,
-    V Function(V value) updateFn, {
-    V Function()? ifAbsentFn,
-    TransientOwner? owner,
-  });
-
-  /// Helper to get the hash code of a key.
-  int hashOfKey(K key) => key.hashCode;
+  // TODO: Add equality and hashCode implementations
 }
 
-// --- Empty Node ---
-
-/// Represents the canonical empty HAMT node.
+/// Represents an empty HAMT node (singleton).
 class HamtEmptyNode<K, V> extends HamtNode<K, V> {
-  static final HamtEmptyNode<Never, Never> _instance =
-      HamtEmptyNode._internal();
-  HamtEmptyNode._internal() : super(null); // Always immutable
-  factory HamtEmptyNode() => _instance as HamtEmptyNode<K, V>;
+  const HamtEmptyNode();
+
+  static final HamtEmptyNode _instance = const HamtEmptyNode();
+  static HamtEmptyNode<K, V> instance<K, V>() =>
+      _instance as HamtEmptyNode<K, V>;
 
   @override
-  bool get isEmptyNode => true;
+  bool get isEmpty => true;
+
   @override
-  HamtNode<K, V> freeze(TransientOwner? owner) => this;
+  int get size => 0;
+
   @override
   V? get(K key, int hash, int shift) => null;
-  @override
-  bool containsKey(K key, int hash, int shift) => false;
 
   @override
-  ({HamtNode<K, V> node, bool didAdd}) add(
+  HamtNode<K, V> add(
     K key,
     V value,
     int hash,
     int shift,
     TransientOwner? owner,
   ) {
-    // Adding to empty creates a DataNode
-    return (node: HamtDataNode(hash, key, value), didAdd: true);
+    // Return a HamtDataNode when adding to empty
+    // TODO: Handle transient owner?
+    return HamtDataNode(hash, key, value);
   }
 
   @override
-  ({HamtNode<K, V> node, bool didRemove}) remove(
-    K key,
-    int hash,
-    int shift,
-    TransientOwner? owner,
-  ) => (node: this, didRemove: false);
+  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+    return this; // Removing from empty does nothing
+  }
 
   @override
-  ({HamtNode<K, V> node, bool sizeChanged}) update(
-    K key,
-    int hash,
-    int shift,
-    V Function(V value) updateFn, {
-    V Function()? ifAbsentFn,
-    TransientOwner? owner,
-  }) {
-    if (ifAbsentFn != null) {
-      final newValue = ifAbsentFn();
-      return (node: HamtDataNode(hash, key, newValue), sizeChanged: true);
-    }
-    return (node: this, sizeChanged: false);
-  }
+  int get hashCode => 0;
+
+  @override
+  bool operator ==(Object other) => other is HamtEmptyNode;
 }
 
-// --- Data Node (Leaf with single non-colliding entry) ---
-
-/// Represents a HAMT node containing exactly one key-value pair. Immutable.
+/// Represents a node containing a single key-value pair.
+@immutable
 class HamtDataNode<K, V> extends HamtNode<K, V> {
-  final int dataHash;
+  final int dataHash; // Store the full hash for potential collision checks
   final K dataKey;
   final V dataValue;
 
-  HamtDataNode(this.dataHash, this.dataKey, this.dataValue)
-    : super(null); // Always immutable
+  const HamtDataNode(this.dataHash, this.dataKey, this.dataValue);
 
   @override
-  HamtNode<K, V> freeze(TransientOwner? owner) => this;
-  @override
-  V? get(K key, int hash, int shift) => (key == dataKey) ? dataValue : null;
-  @override
-  bool containsKey(K key, int hash, int shift) => key == dataKey;
+  bool get isEmpty => false;
 
   @override
-  ({HamtNode<K, V> node, bool didAdd}) add(
-    K key,
-    V value,
-    int hash,
-    int shift,
-    TransientOwner? owner,
-  ) {
-    if (key == dataKey) {
-      return (value == dataValue)
-          ? (node: this, didAdd: false)
-          : (node: HamtDataNode(hash, key, value), didAdd: false);
-    }
-    // Collision or different fragment: delegate to merge function
-    return (
-      node: _mergeDataEntriesHamt(
-        shift,
-        dataHash,
-        dataKey,
-        dataValue,
-        hash,
-        key,
-        value,
-        owner,
-      ),
-      didAdd: true,
-    );
-  }
+  int get size => 1;
 
-  @override
-  ({HamtNode<K, V> node, bool didRemove}) remove(
-    K key,
-    int hash,
-    int shift,
-    TransientOwner? owner,
-  ) =>
-      (key == dataKey)
-          ? (node: HamtEmptyNode<K, V>(), didRemove: true)
-          : (node: this, didRemove: false);
-
-  @override
-  ({HamtNode<K, V> node, bool sizeChanged}) update(
-    K key,
-    int hash,
-    int shift,
-    V Function(V value) updateFn, {
-    V Function()? ifAbsentFn,
-    TransientOwner? owner,
-  }) {
-    if (key == dataKey) {
-      final newValue = updateFn(dataValue);
-      return (newValue == dataValue)
-          ? (node: this, sizeChanged: false)
-          : (node: HamtDataNode(hash, key, newValue), sizeChanged: false);
-    } else if (ifAbsentFn != null) {
-      final newValue = ifAbsentFn();
-      return (
-        node: _mergeDataEntriesHamt(
-          shift,
-          dataHash,
-          dataKey,
-          dataValue,
-          hash,
-          key,
-          newValue,
-          owner,
-        ),
-        sizeChanged: true,
-      );
-    }
-    return (node: this, sizeChanged: false);
-  }
-}
-
-// --- Collision Node (Leaf with multiple colliding entries) ---
-
-/// Represents a HAMT node containing multiple entries with the same hash up to a certain depth.
-class HamtCollisionNode<K, V> extends HamtNode<K, V> {
-  final int collisionHash;
-  List<MapEntry<K, V>> entries; // Mutable if transient
-
-  HamtCollisionNode(
-    this.collisionHash,
-    List<MapEntry<K, V>> entries, [
-    TransientOwner? owner,
-  ]) : entries =
-           entries, // Direct assignment, mutability handled by ensureMutable/freeze
-       assert(entries.length >= 2),
-       super(owner);
-
-  @override
-  HamtNode<K, V> freeze(TransientOwner? owner) {
-    if (isTransient(owner)) {
-      entries = List.unmodifiable(entries);
-      _owner = null;
-    }
-    return this;
-  }
-
-  // Placeholder implementations - logic similar to ChampCollisionNode
   @override
   V? get(K key, int hash, int shift) {
-    /* ... linear search ... */
-    return null;
+    // No need to check hash here, only key equality matters
+    return (key == dataKey) ? dataValue : null;
   }
 
   @override
-  bool containsKey(K key, int hash, int shift) {
-    /* ... linear search ... */
-    return false;
-  }
-
-  @override
-  ({HamtNode<K, V> node, bool didAdd}) add(
+  HamtNode<K, V> add(
     K key,
     V value,
     int hash,
     int shift,
     TransientOwner? owner,
   ) {
-    // If hash differs, split using HamtBitmapNode.fromNodesHamt
-    // If hash matches, add/update in entries list (handle transient/immutable)
-    return (node: this, didAdd: false); // Placeholder
-  }
-
-  @override
-  ({HamtNode<K, V> node, bool didRemove}) remove(
-    K key,
-    int hash,
-    int shift,
-    TransientOwner? owner,
-  ) {
-    // If hash matches, remove from entries list (handle transient/immutable)
-    // If list size becomes 1, return HamtDataNode
-    // If list size becomes 0, return HamtEmptyNode (Needs check)
-    return (node: this, didRemove: false); // Placeholder
-  }
-
-  @override
-  ({HamtNode<K, V> node, bool sizeChanged}) update(
-    K key,
-    int hash,
-    int shift,
-    V Function(V value) updateFn, {
-    V Function()? ifAbsentFn,
-    TransientOwner? owner,
-  }) {
-    // Similar logic to add, handling updateFn and ifAbsentFn
-    return (node: this, sizeChanged: false); // Placeholder
-  }
-}
-
-// --- Bitmap Node (Internal node) ---
-
-/// Abstract base class for HAMT nodes using a single bitmap.
-abstract class HamtBitmapNode<K, V> extends HamtNode<K, V> {
-  int bitmap; // Single bitmap indicating populated slots
-  List<Object?> content; // Stores alternating K, V or HamtNode
-
-  HamtBitmapNode(this.bitmap, this.content, [TransientOwner? owner])
-    : super(owner);
-
-  /// Calculates the sparse index for a given bit position.
-  int sparseIndex(int bitpos) => bitCount(bitmap & (bitpos - 1));
-
-  /// Calculates the index for a data key (K) in the content list.
-  /// Assumes alternating K, V storage.
-  int dataKeyIndex(int sparseIdx) => sparseIdx * 2;
-
-  /// Calculates the index for a data value (V) in the content list.
-  int dataValueIndex(int sparseIdx) => sparseIdx * 2 + 1;
-
-  /// Calculates the index for a child node (HamtNode) in the content list.
-  /// This depends on the storage strategy (e.g., all nodes after all data).
-  /// Placeholder - needs concrete strategy.
-  int nodeIndex(int sparseIdx, int dataCount) => dataCount * 2 + sparseIdx;
-
-  // Factory needed to create initial bitmap node when merging/splitting
-  // static HamtNode<K, V> fromEntriesHamt<K, V>(...) { ... }
-}
-
-// --- Concrete Bitmap Node Implementation ---
-// For simplicity, using a single implementation that handles resizing internally.
-// Could be split into Sparse/Array later if needed for optimization.
-class HamtBitmapNodeImpl<K, V> extends HamtBitmapNode<K, V> {
-  HamtBitmapNodeImpl(int bitmap, List<Object?> content, [TransientOwner? owner])
-    : super(bitmap, content, owner);
-
-  @override
-  HamtNode<K, V> freeze(TransientOwner? owner) {
-    if (isTransient(owner)) {
-      // Freeze child nodes recursively
-      for (int i = 0; i < content.length; i++) {
-        final item = content[i];
-        // Need logic to determine if item is a node based on bitmap and index
-        // Placeholder: Assuming nodes are stored directly for now
-        if (item is HamtNode<K, V>) {
-          content[i] = item.freeze(owner);
-        }
+    if (key == dataKey) {
+      // Update existing key
+      if (value == dataValue) {
+        return this; // Value is the same, return same instance
       }
-      content = List.unmodifiable(content);
-      _owner = null;
+      // TODO: Handle transient owner for update?
+      return HamtDataNode(hash, key, value);
     }
-    return this;
+
+    // Collision or expansion needed
+    // Use the hash fragment at the current level for comparison
+    final currentFrag = HamtBitmapNode.indexFragment(
+      dataHash,
+      shift,
+    ); // Use static helper
+    final newFrag = HamtBitmapNode.indexFragment(
+      hash,
+      shift,
+    ); // Use static helper
+
+    if (currentFrag == newFrag) {
+      // Hash collision at this level's fragment
+      // TODO: Handle transient owner?
+      return HamtCollisionNode(currentFrag, [
+        this,
+        HamtDataNode(hash, key, value),
+      ]);
+    } else {
+      // Expand to a BitmapNode (SparseNode)
+      // TODO: Handle transient owner?
+      // Corrected call to static empty method
+      return HamtSparseNode.empty<K, V>()
+          .add(dataKey, dataValue, dataHash, shift, owner) // Add original data
+          .add(key, value, hash, shift, owner); // Add new data
+    }
   }
 
-  // Placeholder implementations for core operations
+  @override
+  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+    if (key == dataKey) {
+      return HamtEmptyNode.instance<K, V>();
+    }
+    return this; // Key not found
+  }
+
+  @override
+  int get hashCode => dataHash ^ dataKey.hashCode ^ dataValue.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HamtDataNode &&
+          runtimeType == other.runtimeType &&
+          // dataHash == other.dataHash && // Hash equality isn't strictly needed if keys match
+          dataKey == other.dataKey &&
+          dataValue == other.dataValue;
+}
+
+/// Represents a node containing multiple entries with the same hash code fragment
+/// (but potentially different full hash codes or keys).
+@immutable
+class HamtCollisionNode<K, V> extends HamtNode<K, V> {
+  final int collisionFrag; // The hash fragment where the collision occurred
+  // Store as a list of DataNodes for simplicity, could optimize later
+  // Ensure children always have > 1 element
+  final List<HamtDataNode<K, V>> children;
+
+  const HamtCollisionNode(this.collisionFrag, this.children)
+    : assert(children.length > 1);
+
+  @override
+  bool get isEmpty => false;
+
+  @override
+  int get size => children.length;
+
   @override
   V? get(K key, int hash, int shift) {
-    /* ... HAMT lookup logic ... */
+    // We only need to check the key here, hash collision already happened
+    for (final child in children) {
+      if (child.dataKey == key) {
+        return child.dataValue;
+      }
+    }
     return null;
   }
 
   @override
-  bool containsKey(K key, int hash, int shift) {
-    /* ... HAMT lookup logic ... */
-    return false;
-  }
-
-  @override
-  ({HamtNode<K, V> node, bool didAdd}) add(
+  HamtNode<K, V> add(
     K key,
     V value,
     int hash,
     int shift,
     TransientOwner? owner,
   ) {
-    /* ... HAMT add logic ... */
-    return (node: this, didAdd: false);
+    final newFrag = HamtBitmapNode.indexFragment(
+      hash,
+      shift,
+    ); // Use static helper
+
+    if (newFrag != collisionFrag) {
+      // The new key's hash fragment differs, so we need to expand.
+      // Create a new Bitmap node containing the current collision node
+      // and the new data node, placed according to their respective hash fragments.
+      // TODO: Handle transient owner?
+      final newDataNode = HamtDataNode(hash, key, value);
+      // Corrected call to static empty method and ensure addNode is available/correct
+      // Assuming addNode exists on HamtSparseNode and returns HamtNode
+      // Start with an empty sparse node which is a HamtBitmapNode
+      HamtBitmapNode<K, V> newNode = HamtSparseNode.empty<K, V>();
+      // Add the existing collision node first
+      newNode =
+          newNode.addNode(collisionFrag, this, shift, owner)
+              as HamtBitmapNode<K, V>;
+      // Then add the new data node
+      newNode =
+          newNode.addNode(newFrag, newDataNode, shift, owner)
+              as HamtBitmapNode<K, V>;
+      return newNode;
+      // Note: The casts 'as HamtBitmapNode<K, V>' might be redundant if addNode's
+      // return type is correctly defined as HamtBitmapNode or a subtype,
+      // but added for explicit clarity during development.
+      // We assume addNode handles potential transitions (e.g., Sparse to Array) internally.
+    }
+
+    // Hash fragment matches, add/update within the collision list
+    int foundIndex = -1;
+    for (int i = 0; i < children.length; i++) {
+      if (children[i].dataKey == key) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    // TODO: Handle transient owner?
+    final newChildren = List<HamtDataNode<K, V>>.from(children);
+    final newDataNode = HamtDataNode(
+      hash,
+      key,
+      value,
+    ); // Use full hash for data node
+
+    if (foundIndex != -1) {
+      // Key found, update
+      if (newChildren[foundIndex].dataValue == value) {
+        return this; // Value is the same, no change needed
+      }
+      newChildren[foundIndex] = newDataNode; // Update existing entry
+    } else {
+      // Key not found, add new entry
+      newChildren.add(newDataNode);
+    }
+    return HamtCollisionNode(collisionFrag, newChildren);
   }
 
   @override
-  ({HamtNode<K, V> node, bool didRemove}) remove(
+  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+    // We only need to check the key here
+    int foundIndex = -1;
+    for (int i = 0; i < children.length; i++) {
+      if (children[i].dataKey == key) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    if (foundIndex == -1) {
+      return this; // Key not found in this collision node
+    }
+
+    // TODO: Handle transient owner?
+    if (children.length == 2) {
+      // Removing one leaves only one, collapse back to a DataNode
+      final remainingChild = children[1 - foundIndex];
+      return remainingChild;
+    } else {
+      // Remove from list and create a new CollisionNode
+      final newChildren = List<HamtDataNode<K, V>>.from(children);
+      newChildren.removeAt(foundIndex);
+      return HamtCollisionNode(collisionFrag, newChildren);
+    }
+  }
+
+  @override
+  int get hashCode =>
+      collisionFrag ^ const DeepCollectionEquality.unordered().hash(children);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HamtCollisionNode &&
+          runtimeType == other.runtimeType &&
+          collisionFrag == other.collisionFrag &&
+          const DeepCollectionEquality.unordered().equals(
+            children,
+            other.children,
+          );
+}
+
+/// Abstract base class for HAMT nodes that use a bitmap to track children/data.
+@immutable
+abstract class HamtBitmapNode<K, V> extends HamtNode<K, V> {
+  final int bitmap;
+  // Content can store HamtNode<K,V> or potentially [K, V] pairs directly
+  // depending on the chosen HAMT strategy.
+  // For simplicity, let's start with storing only HamtNode<K,V>.
+  final List<HamtNode<K, V>> content;
+
+  const HamtBitmapNode(this.bitmap, this.content);
+
+  @override
+  bool get isEmpty => false; // Bitmap nodes are never logically empty
+
+  /// Calculates the sparse index in the content array for a given bit position.
+  int sparseIndex(int bitpos) {
+    // Count the number of set bits *before* the target bitpos in the bitmap
+    // Use helper function as workaround for potential analyzer issue with int.bitCount
+    return _bitCount(bitmap & (bitpos - 1));
+  }
+
+  /// Calculates the index fragment (e.g., 5 bits) for a given hash and shift level.
+  static int indexFragment(int hash, int shift) {
+    return (hash >> shift) & 0x1f; // 0x1f = 31 = 0b11111
+  }
+
+  /// Creates a bitmask for a given index fragment.
+  static int bitpos(int indexFragment) {
+    return 1 << indexFragment;
+  }
+
+  // Helper to add a node (DataNode or CollisionNode) to a BitmapNode.
+  // This is used when expanding from Data/Collision or adding to existing Bitmap.
+  // Returns HamtNode because it might stay Sparse or transition to Array.
+  HamtNode<K, V> addNode(
+    int frag,
+    HamtNode<K, V> nodeToAdd,
+    int shift,
+    TransientOwner? owner,
+  );
+
+  // Concrete implementations (Sparse/Array) will override get, add, remove.
+}
+
+/// Represents a HAMT node using a bitmap and a sparse array for children.
+@immutable
+class HamtSparseNode<K, V> extends HamtBitmapNode<K, V> {
+  const HamtSparseNode(super.bitmap, super.content);
+
+  // Corrected static empty method
+  static HamtSparseNode<K, V> empty<K, V>() => const HamtSparseNode(0, []);
+
+  @override
+  int get size {
+    // Sum the sizes of all children
+    int totalSize = 0;
+    for (final node in content) {
+      totalSize += node.size;
+    }
+    return totalSize;
+  }
+
+  @override
+  V? get(K key, int hash, int shift) {
+    final frag = HamtBitmapNode.indexFragment(hash, shift);
+    final pos = HamtBitmapNode.bitpos(frag);
+
+    if ((bitmap & pos) == 0) {
+      return null; // No entry for this fragment
+    }
+
+    final idx = sparseIndex(pos);
+    // Basic bounds check (should ideally not happen with correct logic)
+    if (idx >= content.length) {
+      print(
+        "Error: SparseNode.get index out of bounds. Bitmap: ${bitmap.toRadixString(2)}, Pos: ${pos.toRadixString(2)}, Idx: $idx, ContentLen: ${content.length}",
+      );
+      return null;
+    }
+    final child = content[idx];
+    return child.get(key, hash, shift + 5); // Recurse to next level
+  }
+
+  @override
+  HamtNode<K, V> add(
     K key,
+    V value,
     int hash,
     int shift,
     TransientOwner? owner,
   ) {
-    /* ... HAMT remove logic ... */
-    return (node: this, didRemove: false);
+    final frag = HamtBitmapNode.indexFragment(hash, shift);
+    final pos = HamtBitmapNode.bitpos(frag);
+    final idx = sparseIndex(pos);
+
+    if ((bitmap & pos) == 0) {
+      // Insert new entry (DataNode) into this node
+      final newDataNode = HamtDataNode(hash, key, value);
+      // TODO: Handle transient owner?
+      final newContent = List<HamtNode<K, V>>.from(content);
+      newContent.insert(idx, newDataNode);
+      final newBitmap = bitmap | pos;
+      // TODO: Check if node needs to transition to ArrayNode (if density high)?
+      return HamtSparseNode(newBitmap, newContent);
+    } else {
+      // Collision or update within existing child
+      // Basic bounds check
+      if (idx >= content.length) {
+        print(
+          "Error: SparseNode.add index out of bounds. Bitmap: ${bitmap.toRadixString(2)}, Pos: ${pos.toRadixString(2)}, Idx: $idx, ContentLen: ${content.length}",
+        );
+        // Fallback: Recreate node with just the new item? Or throw?
+        // This indicates a logic error elsewhere. For now, let's try adding as if empty.
+        final newDataNode = HamtDataNode(hash, key, value);
+        return HamtSparseNode(pos, [newDataNode]);
+      }
+      final child = content[idx];
+      final newChild = child.add(key, value, hash, shift + 5, owner);
+
+      if (identical(child, newChild)) {
+        return this; // Child did not change
+      }
+
+      // TODO: Handle transient owner?
+      final newContent = List<HamtNode<K, V>>.from(content);
+      newContent[idx] = newChild;
+      // Return HamtSparseNode for now, assuming no transition
+      return HamtSparseNode(bitmap, newContent);
+    }
   }
 
   @override
-  ({HamtNode<K, V> node, bool sizeChanged}) update(
-    K key,
-    int hash,
+  HamtNode<K, V> addNode(
+    int frag,
+    HamtNode<K, V> nodeToAdd,
     int shift,
-    V Function(V value) updateFn, {
-    V Function()? ifAbsentFn,
     TransientOwner? owner,
-  }) {
-    /* ... HAMT update logic ... */
-    return (node: this, sizeChanged: false);
-  }
-}
+  ) {
+    final pos = HamtBitmapNode.bitpos(frag);
+    final idx = sparseIndex(pos);
 
-// --- Helper for merging (HAMT version) ---
-// Needs to be implemented based on the chosen HAMT storage strategy
-HamtNode<K, V> _mergeDataEntriesHamt<K, V>(
-  int shift,
-  int hash1,
-  K key1,
-  V value1,
-  int hash2,
-  K key2,
-  V value2,
-  TransientOwner? owner,
-) {
-  if (shift >= kMaxDepth * kBitPartitionSize) {
-    return HamtCollisionNode<K, V>(hash1, [
-      MapEntry(key1, value1),
-      MapEntry(key2, value2),
-    ], owner);
+    // TODO: Handle transient owner?
+    final newContent = List<HamtNode<K, V>>.from(content);
+    newContent.insert(idx, nodeToAdd);
+    final newBitmap = bitmap | pos;
+    // TODO: Check if node needs to transition to ArrayNode (if density high)?
+    // Return HamtSparseNode for now
+    return HamtSparseNode(newBitmap, newContent);
   }
 
-  final frag1 = indexFragment(shift, hash1);
-  final frag2 = indexFragment(shift, hash2);
+  @override
+  HamtNode<K, V> remove(K key, int hash, int shift, TransientOwner? owner) {
+    final frag = HamtBitmapNode.indexFragment(hash, shift);
+    final pos = HamtBitmapNode.bitpos(frag);
 
-  if (frag1 == frag2) {
-    final subNode = _mergeDataEntriesHamt(
-      shift + kBitPartitionSize,
-      hash1,
-      key1,
-      value1,
-      hash2,
-      key2,
-      value2,
-      owner,
-    );
-    final bitpos = 1 << frag1;
-    // Create bitmap node with single child node
-    // Storage strategy: Node stored directly at sparseIndex
-    final content = [subNode];
-    return HamtBitmapNodeImpl<K, V>(
-      // Use renamed class
-      bitpos,
-      content,
-      owner,
-    );
-  } else {
-    final bitpos1 = 1 << frag1;
-    final bitpos2 = 1 << frag2;
-    final bitmap = bitpos1 | bitpos2;
-    // Create bitmap node with two data entries
-    // Storage strategy: Store [K, V] list directly at sparseIndex
-    final List<Object?> content;
-    if (frag1 < frag2) {
-      // Store as lists within the content list
-      content = [
-        [key1, value1],
-        [key2, value2],
-      ];
-    } else {
-      // Store as lists within the content list
-      content = [
-        [key2, value2],
-        [key1, value1],
-      ];
+    if ((bitmap & pos) == 0) {
+      return this; // Key not found here
     }
-    return HamtBitmapNodeImpl<K, V>(
-      bitmap,
-      content,
-      owner,
-    ); // Use renamed class
+
+    final idx = sparseIndex(pos);
+    // Basic bounds check
+    if (idx >= content.length) {
+      print(
+        "Error: SparseNode.remove index out of bounds. Bitmap: ${bitmap.toRadixString(2)}, Pos: ${pos.toRadixString(2)}, Idx: $idx, ContentLen: ${content.length}",
+      );
+      return this; // Cannot remove if index is wrong
+    }
+    final child = content[idx];
+    final newChild = child.remove(key, hash, shift + 5, owner);
+
+    if (identical(child, newChild)) {
+      return this; // Child did not change
+    }
+
+    // TODO: Handle transient owner?
+    if (newChild.isEmpty) {
+      // Child became empty, remove it from this node
+      final newBitmap = bitmap & ~pos;
+      if (newBitmap == 0) {
+        // This node becomes empty
+        return HamtEmptyNode.instance<K, V>();
+      }
+
+      final newContent = List<HamtNode<K, V>>.from(content);
+      newContent.removeAt(idx);
+
+      // Collapse check: If only one child remains and it's NOT a BitmapNode,
+      // return the child directly to avoid unnecessary intermediate nodes.
+      if (newContent.length == 1 && newContent[0] is! HamtBitmapNode<K, V>) {
+        return newContent[0];
+      }
+
+      // TODO: Check if node needs to transition from ArrayNode back to SparseNode?
+      // Return HamtSparseNode for now
+      return HamtSparseNode(newBitmap, newContent);
+    } else {
+      // Child was modified but not empty
+      final newContent = List<HamtNode<K, V>>.from(content);
+      newContent[idx] = newChild;
+      // Return HamtSparseNode for now
+      return HamtSparseNode(bitmap, newContent);
+    }
   }
+
+  @override
+  int get hashCode => bitmap ^ const DeepCollectionEquality().hash(content);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HamtSparseNode &&
+          runtimeType == other.runtimeType &&
+          bitmap == other.bitmap &&
+          const DeepCollectionEquality().equals(content, other.content);
 }
+
+// TODO: Define HamtArrayNode<K, V> (less common, uses full array)
