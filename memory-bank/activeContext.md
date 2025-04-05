@@ -1,7 +1,7 @@
-<!-- Version: 1.15 | Last Updated: 2025-04-05 | Updated By: Cline -->
+<!-- Version: 1.16 | Last Updated: 2025-04-05 | Updated By: Cline -->
 # Active Context: ApexCollections
 
-## Current Status (Timestamp: 2025-04-05 ~06:45 UTC+1)
+## Current Status (Timestamp: 2025-04-05 ~07:38 UTC+1)
 
 -   **Phase 1: Research & Benchmarking COMPLETE.**
 -   **Phase 2: Core Design & API Definition COMPLETE.**
@@ -31,30 +31,46 @@
         -   **(Resolved)** Persistent Dart Analyzer errors related to `ChampArrayNode` resolved by fixing `champ_node.dart` structure, clearing `.dart_tool`, and using `git stash pop`.
         -   **(Resolved)** Multiple `ApexMap` test failures resolved by refactoring `ChampTrieIterator`. **All tests now pass with the reverted (slower) iterator.**
         -   **(Resolved)** Errors related to splitting `rrb_node.dart` and `champ_array_node.dart` fixed.
-    -   **Performance Status (Updated 2025-04-05 ~01:33 UTC+1 - After iterator refactoring attempt):** (No change)
-        -   **ApexMap (Size: 10k):** ...
-        -   **ApexList (Size: 10k):** ...
+    -   **Performance Status (Updated 2025-04-05 ~07:38 UTC+1 - After latest benchmark run):**
+        -   **ApexMap (CHAMP - Size: 10k):**
+            -   `add`: ~4.18 us (FIC: ~0.19 us)
+            -   `addAll`: ~32.89 us (FIC: ~11235 us)
+            -   `lookup[]`: ~0.22 us (FIC: ~0.07 us)
+            -   `remove`: ~3.79 us (FIC: ~6888 us)
+            -   `update`: ~8.49 us (FIC: ~7193 us)
+            -   `iterateEntries`: ~3475.83 us (**~2.93x slower** than FIC ~1186.95 us)
+            -   `toMap`: ~9148.89 us (~1.21x slower than FIC ~7573.21 us)
+            -   `fromMap`: ~8977.48 us (~4.36x slower than FIC ~2060.06 us)
+        -   **ApexList (RRB - Size: 10k):**
+            -   `add`: ~22.11 us (FIC: ~1608.56 us)
+            -   `addAll`: ~28.72 us (FIC: ~1.41 us)
+            -   `lookup[]`: ~0.17 us (FIC: ~0.04 us)
+            -   `removeAt`: ~18.83 us (FIC: ~596.07 us)
+            -   `removeWhere`: ~2830.72 us (FIC: ~1445.01 us)
+            -   `iterateSum`: ~303.41 us (FIC: ~285.57 us)
+            -   `sublist`: ~5.30 us (FIC: ~895.72 us)
+            -   `concat(+)`: ~7.02 us (FIC: ~0.70 us)
+            -   `toList`: ~709.56 us (FIC: ~517.51 us)
+            -   `fromIterable`: ~2638.88 us (FIC: ~606.59 us)
 
 ## Current Focus
 
--   **ApexList:** Core logic stable. `rrb_node.dart` split.
--   **ApexMap:** Fixed structural errors in `champ_node.dart`. Updated Dartdocs. `champ_array_node.dart` split. `ApexMapImpl` splitting reverted.
+-   **ApexList:** Core logic stable. `rrb_node.dart` split. Performance generally strong in structural modifications, needs review for iteration/conversion.
+-   **ApexMap:** CHAMP implementation abandoned due to performance issues (especially iteration). `champ_*.dart` files remain but are effectively deprecated. `ApexMapImpl` splitting reverted.
 -   **Testing:** Test files split. All tests pass.
--   **Benchmarking:** CHAMP iterator optimizations failed. CHAMP abandoned for Map.
--   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap`.
+-   **Benchmarking:** Latest benchmarks run, confirming CHAMP issues and providing current `ApexList` numbers.
+-   **Documentation:** Updated Dartdocs for `ApexList` and `ApexMap` (CHAMP version).
 -   **Code Structure:** Addressed LoC limit for node files and test files. Deferred for `apex_map.dart` and `apex_list.dart`.
 
 ## Next Immediate Steps
 
 1.  ... (Previous steps DONE) ...
-18. **(DONE)** Split large test files (`apex_map_test.dart`, `apex_list_test.dart`).
-19. **(DONE)** Commit test file splitting changes.
-20. **(DONE)** Split `rrb_node.dart`.
-21. **(DONE)** Split `champ_array_node.dart`.
-22. **(DONE)** Revert `ApexMapImpl` splitting.
-23. **Update Memory Bank:** Record node file splitting. (This step)
-24. **Commit Changes:** Commit node file splitting changes.
-25. **Phase 4.5:** Reconfirm pivot and begin HAMT research/design, focusing on efficient iterator.
+23. **(DONE)** Update Memory Bank: Record node file splitting.
+24. **(DONE)** Commit Changes: Commit node file splitting changes.
+25. **(DONE)** Run Benchmarks.
+26. **Update Memory Bank:** Record latest benchmark results. (This step)
+27. **Commit Changes:** Commit Memory Bank updates.
+28. **Phase 4.5:** Begin HAMT research/design, focusing on efficient iterator.
 
 ## Open Questions / Decisions
 
