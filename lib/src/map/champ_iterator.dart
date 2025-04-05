@@ -20,12 +20,17 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
     }
   }
 
+  // Keep track of the actual current key and value internally
+  K? _internalCurrentKey;
+  V? _internalCurrentValue;
+
   @override
   MapEntry<K, V> get current {
     if (!_hasCurrent) {
       throw StateError('No current element');
     }
-    return MapEntry(_currentKey as K, _currentValue as V);
+    // Create MapEntry only when the getter is called
+    return MapEntry(_internalCurrentKey as K, _internalCurrentValue as V);
   }
 
   @override
@@ -37,18 +42,25 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
 
       if (element is champ.ChampDataNode<K, V>) {
         // Found a standalone data node
-        _currentKey = element.dataKey;
-        _currentValue = element.dataValue;
+        _internalCurrentKey = element.dataKey;
+        _internalCurrentValue = element.dataValue;
+        _hasCurrent = true;
+        return true;
+      } else if (element is List<Object?> && element.length == 2) {
+        // Handle the [key, value] list marker FIRST
+        _internalCurrentKey = element[0] as K;
+        _internalCurrentValue = element[1] as V;
         _hasCurrent = true;
         return true;
       } else if (element is MapEntry<K, V>) {
-        // Found an entry directly from a CollisionNode
-        _currentKey = element.key;
-        _currentValue = element.value;
+        // Handle MapEntry from CollisionNode SECOND
+        _internalCurrentKey = element.key;
+        _internalCurrentValue = element.value;
         _hasCurrent = true;
         return true;
       } else if (element is champ.ChampCollisionNode<K, V>) {
         // Push all entries from the collision node onto the stack (in reverse order for correct iteration)
+        // Note: CollisionNode entries are MapEntry, handled by the case above after pushing.
         for (int i = element.entries.length - 1; i >= 0; i--) {
           _stack.addFirst(element.entries[i]);
         }
@@ -96,10 +108,10 @@ class ChampTrieIterator<K, V> implements Iterator<MapEntry<K, V>> {
             final payloadIndex = champ.contentIndexFromDataIndex(dataIndex);
             // Check bounds before accessing list
             if (payloadIndex >= 0 && payloadIndex + 1 < list.length) {
-              // Create temporary MapEntry again
+              // Push [key, value] list instead of MapEntry
               final key = list[payloadIndex] as K;
               final value = list[payloadIndex + 1] as V;
-              _stack.addFirst(MapEntry(key, value));
+              _stack.addFirst([key, value]); // Push list marker
             } else {
               // Log error or handle defensively if index is out of bounds
               print("Error: Iterator data index out of bounds.");
