@@ -1,7 +1,10 @@
 import 'dart:math'; // For Random
 import 'package:collection/collection.dart'; // For ListEquality
 import 'apex_list_api.dart';
-import 'rrb_node.dart' as rrb; // Use prefix for node types and constants
+// Import the split node files with the same prefix 'rrb'
+import 'rrb_node_base.dart' as rrb;
+import 'rrb_leaf_node.dart' as rrb;
+import 'rrb_internal_node.dart' as rrb;
 import 'rrb_tree_utils.dart' as treeUtils; // Import the extracted utils
 
 /// Concrete implementation of [ApexList] using a Relaxed Radix Balanced Tree (RRB-Tree).

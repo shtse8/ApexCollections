@@ -3,7 +3,10 @@
 
 import 'dart:math'; // For clamp
 
-import 'rrb_node.dart' as rrb; // Use prefix for node types and constants
+// Import the split node files with the same prefix 'rrb'
+import 'rrb_node_base.dart' as rrb;
+import 'rrb_leaf_node.dart' as rrb;
+import 'rrb_internal_node.dart' as rrb;
 
 /// Computes a size table for a list of children nodes at a given height,
 /// returning null if the resulting parent node would be strict (i.e., does not
