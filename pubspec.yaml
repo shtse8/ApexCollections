@@ -13,7 +13,7 @@ dependencies:
   # path: ^1.8.0
 
 dev_dependencies:
-  lints: ^5.0.0 # Using flutter_lints for stricter rules
+  lints: ^6.0.0 # Using flutter_lints for stricter rules
   test: ^1.24.0
   benchmark_harness: ^2.2.0 # For performance benchmarking
   fast_immutable_collections: ^10.2.1 # Baseline for comparison
