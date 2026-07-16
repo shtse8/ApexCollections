@@ -1,5 +1,10 @@
 # ApexCollections
 
+<p align="center">
+  <img src="docs/banner.png" alt="ApexCollections banner" width="100%" />
+</p>
+
+
 [![Pub Version](https://img.shields.io/badge/pub-coming_soon-blue)](https://pub.dev/) <!-- Placeholder -->
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/<your_username>/apex_collections/actions) <!-- Placeholder -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Placeholder -->
