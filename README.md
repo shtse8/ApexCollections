@@ -1,9 +1,8 @@
 # ApexCollections
 
 <p align="center">
-  <img src="docs/banner.png" alt="ApexCollections banner" width="100%" />
+  <img src="https://mark.sylphx.com/api/v1/banner?type=aurora&theme=tokyonight&text=ApexCollections&desc=Open+source+%C2%B7+Sylphx+ecosystem&height=200&animation=rise&credit=0" alt="ApexCollections — Sylphx Mark banner" width="100%" />
 </p>
-
 
 [![Pub Version](https://img.shields.io/badge/pub-coming_soon-blue)](https://pub.dev/) <!-- Placeholder -->
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/<your_username>/apex_collections/actions) <!-- Placeholder -->
