@@ -1,7 +1,7 @@
 # ApexCollections
 
 <p align="center">
-  <img src="https://mark.sylphx.com/api/v1/mark/hero?type=aurora&theme=tokyonight&text=ApexCollections&desc=Open+source+%C2%B7+Sylphx+ecosystem&height=200&animation=rise" alt="ApexCollections — Sylphx Mark banner" width="100%" />
+  <img src="https://mark.sylphx.com/api/v1/mark/hero.svg?type=waving&theme=dark&text=ApexCollections&desc=Fast%20immutable%20collections%20for%20Dart" alt="ApexCollections" width="100%" />
 </p>
 
 [![Pub Version](https://img.shields.io/badge/pub-coming_soon-blue)](https://pub.dev/) <!-- Placeholder -->
